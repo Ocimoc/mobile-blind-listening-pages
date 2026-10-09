@@ -559,6 +559,8 @@ async function importBackup(file) {
     if (!saveStore()) {
       db = previous;
       storageReadBlocked = previousReadBlocked;
+      if (storageReadBlocked) storageProblem = "本机旧记录仍未恢复。网页已停止写入，避免覆盖原数据。";
+      showStorageProblem();
       throw new Error("本机保存失败，备份未恢复。请查看页面上的存储错误。");
     }
     selectedReason = activeSession()?.progress.activeAttempt?.draftReason || null;
