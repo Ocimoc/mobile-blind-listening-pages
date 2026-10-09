@@ -16,6 +16,7 @@ h3 { margin: 0 0 6px; }
 .status { min-height: 1.35em; color: #236173; font-size: .9rem; margin: 10px 0 0; }
 .storage-warning { color: #722d16; background: #fff0e9; border: 1px solid #e8b8a4; border-radius: 12px; padding: 13px 16px; line-height: 1.5; }
 .field-label { display: block; font-weight: 650; font-size: .9rem; margin: 16px 0 7px; }
+.voice-consent { display: flex; align-items: flex-start; gap: 8px; margin-top: 13px; color: #5b4733; font-size: .88rem; line-height: 1.4; }
 select, textarea { width: 100%; border: 1px solid #c8d5da; border-radius: 10px; background: #fff; padding: 11px 12px; color: #182536; }
 textarea { resize: vertical; }
 .button-row, .play-row { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: 17px; }

@@ -12,6 +12,7 @@ let storageProblem = null;
 let storageReadBlocked = false;
 let db = loadStore();
 let voices = [];
+let allowRemoteVoice = false;
 let spokenToken = 0;
 let selectedReason = null;
 
@@ -186,34 +187,35 @@ function refreshVoices() {
     $("approveVoice").disabled = true;
     return;
   }
-  voices = synth.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang));
+  const englishVoices = synth.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang));
+  voices = englishVoices.filter(v => v.localService === true || allowRemoteVoice);
   const select = $("voiceSelect");
   const old = select.value || db.voice?.key;
   select.replaceChildren();
   voices.forEach(v => {
     const option = document.createElement("option");
     option.value = voiceKey(v);
-    option.textContent = `${v.name} · ${v.lang}${v.localService ? " · 本机" : ""}`;
+    option.textContent = `${v.name} · ${v.lang} · ${v.localService === true ? "本机" : "在线或来源未知"}`;
     select.append(option);
   });
-  const browserDefault = document.createElement("option");
-  browserDefault.value = BROWSER_DEFAULT_VOICE;
-  browserDefault.textContent = "尝试浏览器默认声音（en-US；必须试听确认）";
-  select.append(browserDefault);
-  const googleUS = voices.find(v => v.name === "Google US English" && v.lang.toLowerCase() === "en-us");
-  const preferred = googleUS || voices.find(v => /Microsoft.*(Aria|Jenny|Sonia|Guy|Ryan)/i.test(v.name)) ||
-    voices.find(v => /Google.*English/i.test(v.name)) || voices.find(v => v.localService) || voices[0];
-  const promoteFallback = old === BROWSER_DEFAULT_VOICE && !!googleUS && activeSession()?.progress.stage !== "playing";
-  if (old && !promoteFallback && (old === BROWSER_DEFAULT_VOICE || voices.some(v => voiceKey(v) === old))) select.value = old;
+  if (allowRemoteVoice) {
+    const browserDefault = document.createElement("option");
+    browserDefault.value = BROWSER_DEFAULT_VOICE;
+    browserDefault.textContent = "浏览器默认声音 · 来源未知（en-US）";
+    select.append(browserDefault);
+  }
+  const preferred = voices.find(v => v.localService === true) || voices[0];
+  if (old && ((allowRemoteVoice && old === BROWSER_DEFAULT_VOICE) || voices.some(v => voiceKey(v) === old))) select.value = old;
   else if (preferred) select.value = voiceKey(preferred);
-  if (promoteFallback) { db.voice = null; saveStore(); }
-  $("voiceStatus").textContent = promoteFallback ? "检测到 Google US English。请先试听，确认后才用于训练。" : voices.length ? `检测到 ${voices.length} 个英语声音。请试听并判断是否清楚。` : "未找到明确标为英语的声音。可尝试浏览器默认 en-US；只有试听后确认发音清楚才开始。";
-  $("previewVoice").disabled = false;
-  $("approveVoice").disabled = !(db.voice?.approved && db.voice.key === select.value);
+  $("voiceStatus").textContent = voices.length
+    ? `可选 ${voices.length} 个英语声音。请试听并判断是否清楚。`
+    : "没有检测到本机英语声音。若要尝试在线或来源未知的声音，请先勾选下方选项。";
+  $("previewVoice").disabled = !select.value;
+  $("approveVoice").disabled = !select.value || !(db.voice?.approved && db.voice.key === select.value);
   render();
 }
 function selectedVoice() {
-  if ($("voiceSelect").value === BROWSER_DEFAULT_VOICE) return { browserDefault: true, lang: "en-US" };
+  if (allowRemoteVoice && $("voiceSelect").value === BROWSER_DEFAULT_VOICE) return { browserDefault: true, lang: "en-US" };
   return voices.find(v => voiceKey(v) === $("voiceSelect").value) || null;
 }
 function speak(text, callbacks = {}) {
@@ -623,6 +625,13 @@ async function importPack(file) {
 }
 function bindEvents() {
   $("refreshVoices").addEventListener("click", refreshVoices);
+  $("allowRemoteVoice").addEventListener("change", () => {
+    interruptAudio();
+    allowRemoteVoice = $("allowRemoteVoice").checked;
+    db.voice = null;
+    saveStore();
+    refreshVoices();
+  });
   $("voiceSelect").addEventListener("change", () => { db.voice = null; saveStore(); $("approveVoice").disabled = true; render(); });
   $("previewVoice").addEventListener("click", () => {
     $("approveVoice").disabled = true;
