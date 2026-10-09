@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>英语盲听</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <p id="storageWarning" class="storage-warning" role="alert" hidden></p>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">手机训练</p>
+        <h1>英语盲听</h1>
+      </div>
+      <span class="privacy">句子默认隐藏 · 记录保存在当前浏览器</span>
+    </header>
+
+    <section class="card voice-card" id="voiceCard">
+      <h2>先试听英语声音</h2>
+      <p class="muted">试听用的是无关样句，不会透露训练目标。确认声音清楚后开始。</p>
+      <p id="voiceStatus" class="status" role="status">正在查找浏览器语音…</p>
+      <label class="field-label" for="voiceSelect">朗读声音</label>
+      <select id="voiceSelect" aria-label="选择英语朗读声音"></select>
+      <div class="button-row">
+        <button id="previewVoice" type="button" class="button secondary">试听声音</button>
+        <button id="approveVoice" type="button" class="button primary" disabled>确认声音</button>
+        <button id="refreshVoices" type="button" class="button ghost">重新检测</button>
+      </div>
+    </section>
+
+    <section class="card trainer" id="trainerCard" hidden>
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" id="progressLabel">第 1 项</p>
+          <h2 id="stepTitle">准备听</h2>
+        </div>
+        <div class="button-row session-actions">
+          <button id="changeVoice" type="button" class="button ghost">换声音</button>
+          <button id="pauseSession" type="button" class="button ghost">暂停</button>
+        </div>
+      </div>
+      <p id="instruction" class="muted">点击播放，听懂对方在问什么。不用回答英语。</p>
+      <div class="play-row">
+        <button id="playSentence" type="button" class="play-button">播放这一句</button>
+        <button id="replaySentence" type="button" class="button secondary" disabled>重播</button>
+        <button id="stopAudio" type="button" class="button ghost">停止声音</button>
+      </div>
+      <p id="playStatus" class="status" role="status"></p>
+
+      <div class="quiet-tools">
+        <button id="showText" type="button" class="text-link" disabled>显示刚才的英文</button>
+        <p id="revealedText" class="revealed" hidden></p>
+      </div>
+
+      <div id="ratingPanel" class="panel" hidden>
+        <p class="panel-title">刚才这一句</p>
+        <div class="rating-grid">
+          <button type="button" class="choice" data-rating="direct">直接懂</button>
+          <button type="button" class="choice" data-rating="slow">想了一下才懂</button>
+          <button type="button" class="choice" data-rating="not_understood">没听懂</button>
+        </div>
+        <label class="field-label" for="quickNote">补充备注（可不填）</label>
+        <textarea id="quickNote" rows="2" placeholder="选完理解状态就会保存"></textarea>
+      </div>
+
+      <div id="reasonPanel" class="panel" hidden>
+        <p class="panel-title">哪里卡住了？可以跳过</p>
+        <div class="reason-grid">
+          <button type="button" class="reason" data-reason="target_sound">目标声音没认出</button>
+          <button type="button" class="reason" data-reason="target_meaning">声音听到了，意思没想起</button>
+          <button type="button" class="reason" data-reason="background">外围词卡住</button>
+          <button type="button" class="reason" data-reason="integration">词似乎懂，整句没连上</button>
+          <button type="button" class="reason" data-reason="uncertain">说不清</button>
+        </div>
+        <label class="field-label" for="noteInput">补充备注（可不填）</label>
+        <textarea id="noteInput" rows="2" placeholder="例如：前半句听到了，后半句没跟上"></textarea>
+        <button id="saveMiss" type="button" class="button primary">保存这次反馈</button>
+      </div>
+
+      <div id="feedbackPanel" class="panel feedback" hidden>
+        <p class="panel-title">必要反馈</p>
+        <p id="targetFeedback"></p>
+        <div class="button-row">
+          <button id="playTarget" type="button" class="button secondary">听目标发音</button>
+          <button id="continueAfterFeedback" type="button" class="button primary">继续听新句</button>
+        </div>
+      </div>
+
+      <div id="continuePanel" class="panel" hidden>
+        <p id="continueMessage" class="muted"></p>
+        <button id="continueNext" type="button" class="button primary">继续听新句</button>
+      </div>
+
+      <div id="completePanel" class="panel" hidden>
+        <h3>这次材料已到这里</h3>
+        <p class="muted" id="completeMessage">结果已保存在当前浏览器。建议导出完整备份，并确认文件已保存。</p>
+      </div>
+    </section>
+
+    <section class="card data-card">
+      <div>
+        <h2>记录与训练包</h2>
+        <p class="muted">此网页不附带训练包。先从手机“文件”导入自己的 JSON 训练包；进度保存在当前浏览器。本轮报告按当前训练包划分，不按日期划分；还附带历次已见候选句的编号，用于避免重复。报告包含原句、理解状态、可选备注和时间，只有你手动发送后 Work 才能收到。完整备份包含所有训练包和记录，请单独保管，并实际试过恢复。</p>
+      </div>
+      <div class="button-row">
+        <button id="exportJson" type="button" class="button secondary">导出本轮 JSON</button>
+        <button id="exportAllJson" type="button" class="button ghost">导出完整备份</button>
+        <label class="button ghost file-button">从完整备份恢复<input id="importBackup" type="file" accept=".json,application/json" hidden></label>
+        <label class="button ghost file-button">导入 Work 的新训练包<input id="importPack" type="file" accept=".json,application/json" hidden></label>
+      </div>
+      <button id="exportDamagedRaw" type="button" class="button ghost" hidden>下载异常原始数据</button>
+      <p id="dataStatus" class="status" role="status"></p>
+    </section>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

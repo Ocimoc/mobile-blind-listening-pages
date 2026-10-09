@@ -1,0 +1,10 @@
+*.json
+*.yaml
+*.yml
+*.csv
+*.xlsx
+*.wav
+*.mp3
+packs/
+exports/
+.openai/
