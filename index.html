@@ -105,7 +105,7 @@
     <section class="card data-card">
       <div>
         <h2>记录与训练包</h2>
-        <p class="muted">先从手机“文件”导入训练包。训练包、轮次和记录分开保存；暂停后可跨天继续。每日回传会收集所有轮次中尚未确认回传的已完成记录，附带必要训练背景和历次已见候选句编号。下载后仍需手动交给 Work，再选择同一文件确认回传；原始记录不会删除。完整备份包含全部材料和进度，请单独保管。</p>
+        <p class="muted">可从手机“文件”选择训练包，也可从聊天复制传输码后粘贴导入。训练包、轮次和记录分开保存；暂停后可跨天继续。每日回传会收集所有轮次中尚未确认回传的已完成记录，附带必要训练背景和历次已见候选句编号。下载后仍需手动交给 Work，再选择同一文件确认回传；原始记录不会删除。完整备份包含全部材料和进度，请单独保管。</p>
       </div>
       <label class="field-label" for="sessionSelect">切换或继续训练轮次</label>
       <select id="sessionSelect" aria-label="选择训练轮次"></select>
@@ -117,6 +117,12 @@
         <label class="button ghost file-button">从完整备份恢复<input id="importBackup" type="file" accept=".json,application/json" hidden></label>
         <label class="button ghost file-button">导入 Work 的新训练包<input id="importPack" type="file" accept=".json,application/json" hidden></label>
       </div>
+      <details class="paste-import">
+        <summary>从聊天粘贴训练包</summary>
+        <label class="field-label" for="packPaste">只粘贴完整的训练包 JSON 或以 BLP1: 开头的传输码</label>
+        <textarea id="packPaste" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里粘贴传输码或 JSON"></textarea>
+        <button id="importPastedPack" type="button" class="button secondary">导入粘贴内容</button>
+      </details>
       <button id="exportDamagedRaw" type="button" class="button ghost" hidden>下载异常原始数据</button>
       <p id="dataStatus" class="status" role="status"></p>
     </section>

@@ -806,13 +806,38 @@ function render() {
   $("playStatus").textContent = stage === "playing" ? "正在朗读…" : stage === "rating" ? "可以重播，或直接选刚才的理解状态。" : stage === "blocked" ? "候选句不足。请导出记录交给 Work 补充。" : "";
   document.querySelectorAll(".reason").forEach(button => button.classList.toggle("selected", button.dataset.reason === selectedReason));
 }
+function decodePastedPack(input) {
+  let value = input.trim();
+  const fenced = value.match(/^```(?:json|text)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) value = fenced[1].trim();
+  if (value.startsWith("BLP1:")) {
+    const encoded = value.slice(5).replace(/\s/g, "");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length > Math.ceil(MAX_PACK_BYTES * 4 / 3) + 4) {
+      throw new Error("传输码格式或长度无效。");
+    }
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    if (bytes.length > MAX_PACK_BYTES) throw new Error("训练包超过 2 MB，请勿导入。");
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  }
+  if (new TextEncoder().encode(value).length > MAX_PACK_BYTES) throw new Error("训练包超过 2 MB，请勿导入。");
+  return value;
+}
+function loadPackText(text) {
+  const pack = validatePack(JSON.parse(text));
+  interruptAudio();
+  setActivePack(pack);
+  $("dataStatus").textContent = "训练包已载入。已有轮次会继续；需要重新练同一包时，请点“开始新一轮”。";
+}
+function importPastedPack() {
+  try {
+    loadPackText(decodePastedPack($("packPaste").value));
+    $("packPaste").value = "";
+  } catch (error) { $("dataStatus").textContent = `导入失败：${error.message}`; }
+}
 async function importPack(file) {
   try {
     if (file.size > MAX_PACK_BYTES) throw new Error("训练包超过 2 MB，请勿导入。");
-    const pack = validatePack(JSON.parse(await file.text()));
-    interruptAudio();
-    setActivePack(pack);
-    $("dataStatus").textContent = "训练包已载入。已有轮次会继续；需要重新练同一包时，请点“开始新一轮”。";
+    loadPackText(await file.text());
   } catch (error) { $("dataStatus").textContent = `导入失败：${error.message}`; }
   $("importPack").value = "";
 }
@@ -883,6 +908,7 @@ function bindEvents() {
   $("importBackup").addEventListener("change", event => { if (event.target.files[0]) importBackup(event.target.files[0]); });
   $("exportDamagedRaw").addEventListener("click", exportDamagedRaw);
   $("importPack").addEventListener("change", event => { if (event.target.files[0]) importPack(event.target.files[0]); });
+  $("importPastedPack").addEventListener("click", importPastedPack);
   document.addEventListener("visibilitychange", () => { if (document.hidden) interruptAudio(); });
   window.addEventListener("pagehide", interruptAudio);
 }
@@ -890,7 +916,7 @@ async function init() {
   bindEvents();
   showStorageProblem();
   if (!db.activeSessionId) {
-    $("dataStatus").textContent = "此网页不附带训练包。请从手机“文件”中选择自己的 JSON 训练包。";
+    $("dataStatus").textContent = "此网页不附带训练包。可从手机“文件”选择 JSON，或从聊天粘贴训练包。";
   } else {
     const progress = activeSession()?.progress;
     selectedReason = progress?.activeAttempt?.draftReason || null;
