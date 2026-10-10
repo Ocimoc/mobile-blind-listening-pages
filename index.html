@@ -105,10 +105,14 @@
     <section class="card data-card">
       <div>
         <h2>记录与训练包</h2>
-        <p class="muted">此网页不附带训练包。先从手机“文件”导入自己的 JSON 训练包；进度保存在当前浏览器。本轮报告按当前训练包划分，不按日期划分；还附带历次已见候选句的编号，用于避免重复。报告包含原句、理解状态、可选备注和时间，只有你手动发送后 Work 才能收到。完整备份包含所有训练包和记录，请单独保管，并实际试过恢复。</p>
+        <p class="muted">先从手机“文件”导入训练包。训练包、轮次和记录分开保存；暂停后可跨天继续。每日回传会收集所有轮次中尚未确认回传的已完成记录，附带必要训练背景和历次已见候选句编号。下载后仍需手动交给 Work，再选择同一文件确认回传；原始记录不会删除。完整备份包含全部材料和进度，请单独保管。</p>
       </div>
+      <label class="field-label" for="sessionSelect">切换或继续训练轮次</label>
+      <select id="sessionSelect" aria-label="选择训练轮次"></select>
       <div class="button-row">
-        <button id="exportJson" type="button" class="button secondary">导出本轮 JSON</button>
+        <button id="startNewSession" type="button" class="button ghost">同一训练包开始新一轮</button>
+        <button id="exportJson" type="button" class="button secondary">导出待回传记录</button>
+        <label class="button ghost file-button">确认已交给 Work（选择已发送的 JSON）<input id="confirmReturned" type="file" accept=".json,application/json" hidden></label>
         <button id="exportAllJson" type="button" class="button ghost">导出完整备份</button>
         <label class="button ghost file-button">从完整备份恢复<input id="importBackup" type="file" accept=".json,application/json" hidden></label>
         <label class="button ghost file-button">导入 Work 的新训练包<input id="importPack" type="file" accept=".json,application/json" hidden></label>

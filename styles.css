@@ -46,5 +46,6 @@ textarea { resize: vertical; }
 .data-card { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
 .data-card .button-row { margin-top: 0; }
 .data-card .muted { margin-bottom: 0; }
+.data-card > .field-label, .data-card > select { width: 100%; }
 [hidden] { display: none !important; }
 @media (max-width: 600px) { .topbar { align-items: start; flex-direction: column; } .privacy { white-space: normal; } .card { padding: 18px; } .play-button { width: 100%; } .play-row .button { flex: 1; } .data-card { display: block; } .data-card .button-row { margin-top: 15px; } }

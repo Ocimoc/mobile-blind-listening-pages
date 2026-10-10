@@ -17,12 +17,38 @@ let spokenToken = 0;
 let selectedReason = null;
 
 function now() { return new Date().toISOString(); }
-function emptyStore() { return { version: 1, activePackId: null, sessions: {}, seenCandidateIds: [], voice: null }; }
+function emptyStore() { return { version: 2, activeSessionId: null, sessions: {}, seenCandidateIds: [], acknowledgedRecordIds: [], pendingExports: {}, voice: null }; }
+function newId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function localDate(instant) {
+  const date = new Date(instant);
+  const year = date.getFullYear();
+  return `${year}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function migrateStore(state) {
+  if (state.version !== 1) return state;
+  const sessions = {};
+  for (const [packId, session] of Object.entries(state.sessions)) {
+    const sessionId = `legacy-session-${encodeURIComponent(packId)}`;
+    session.sessionId = sessionId;
+    session.mode = "review"; // Older records cannot prove whether this was a first exposure.
+    session.progress.attempts.forEach((attempt, index) => {
+      attempt.recordId ||= `legacy-record-${encodeURIComponent(packId)}-${index + 1}`;
+      attempt.localDate ||= localDate(attempt.recordedAt || session.progress.createdAt);
+    });
+    sessions[sessionId] = session;
+  }
+  return { version: 2, activeSessionId: state.activePackId === null ? null : `legacy-session-${encodeURIComponent(state.activePackId)}`,
+    sessions, seenCandidateIds: state.seenCandidateIds, acknowledgedRecordIds: [], pendingExports: {}, voice: state.voice || null };
+}
 function loadStore() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return emptyStore();
-    return validateBackupState(JSON.parse(raw));
+    return validateBackupState(migrateStore(JSON.parse(raw)));
   } catch (_) {
     storageReadBlocked = true;
     storageProblem = "本机旧记录无法安全读取。网页已停止写入，避免覆盖原数据；请先导出原始数据或联系处理。";
@@ -43,12 +69,12 @@ function saveStore() {
     showStorageProblem();
     return true;
   } catch (_) {
-    storageProblem = "本机保存失败。当前内容可能只在页面内存中；请立即导出本轮 JSON，关闭或刷新页面前处理。";
+    storageProblem = "本机保存失败。当前内容可能只在页面内存中；请立即导出完整备份并确认文件已保存，关闭或刷新页面前处理。";
     showStorageProblem();
     return false;
   }
 }
-function activeSession() { return db.sessions[db.activePackId] || null; }
+function activeSession() { return db.sessions[db.activeSessionId] || null; }
 function currentItem() {
   const session = activeSession();
   return session?.pack.items[session.progress.itemIndex] || null;
@@ -117,14 +143,38 @@ function validatePack(pack) {
   }
   return pack;
 }
+function hasPriorExposure(item, currentSessionId = null) {
+  const current = currentSessionId ? db.sessions[currentSessionId] : null;
+  const usedHere = new Set([
+    ...(current?.progress.attempts || []).map(attempt => attempt.candidateId),
+    ...(current?.progress.activeAttempt?.playCount > 0 ? [current.progress.activeAttempt.candidateId] : [])
+  ]);
+  if (item.candidates.some(candidate => db.seenCandidateIds.includes(candidate.id) && !usedHere.has(candidate.id))) return true;
+  const candidateIds = new Set(item.candidates.map(candidate => candidate.id));
+  const sentences = new Set(item.candidates.map(candidate => candidate.text.trim().toLowerCase()));
+  return Object.values(db.sessions).some(previous => {
+    if (previous.sessionId === currentSessionId) return false;
+    return previous.pack.items.some(oldItem => {
+      if (oldItem.target !== item.target && !oldItem.candidates.some(candidate =>
+          candidateIds.has(candidate.id) || sentences.has(candidate.text.trim().toLowerCase()))) return false;
+      return previous.progress.attempts.some(attempt => attempt.itemId === oldItem.id && attempt.playCount > 0) ||
+        (previous.progress.activeAttempt?.itemId === oldItem.id && previous.progress.activeAttempt.playCount > 0);
+    });
+  });
+}
 function makeSession(pack) {
   const candidateOrder = {};
+  const priorTargetByItem = {};
   for (const item of pack.items) {
     const initial = item.candidates.filter(c => c.content_role === "initial" || c.content_role === "anchor").map(c => c.id);
     const rest = item.candidates.filter(c => !initial.includes(c.id)).map(c => c.id);
     candidateOrder[item.id] = [...shuffled(initial), ...shuffled(rest)];
+    priorTargetByItem[item.id] = hasPriorExposure(item);
   }
   return {
+    sessionId: newId(),
+    mode: Object.values(priorTargetByItem).some(Boolean) ? "review" : "first_exposure",
+    priorTargetByItem,
     pack,
     progress: {
       createdAt: now(), updatedAt: now(), itemIndex: 0, stage: "ready", paused: false,
@@ -134,17 +184,35 @@ function makeSession(pack) {
 }
 function setActivePack(pack) {
   validatePack(pack);
-  if (Object.hasOwn(db.sessions, pack.pack_id) && JSON.stringify(db.sessions[pack.pack_id].pack) !== JSON.stringify(pack)) {
+  const existing = Object.values(db.sessions).filter(session => session.pack.pack_id === pack.pack_id);
+  if (existing.some(session => JSON.stringify(session.pack) !== JSON.stringify(pack))) {
     throw new Error("这个训练包编号已有不同内容。请让 Work 为修订包使用新编号，避免混淆旧记录。");
   }
   const previous = structuredClone(db);
-  if (!Object.hasOwn(db.sessions, pack.pack_id)) db.sessions[pack.pack_id] = makeSession(pack);
-  db.activePackId = pack.pack_id;
+  const session = existing.at(-1) || makeSession(pack);
+  db.sessions[session.sessionId] = session;
+  db.activeSessionId = session.sessionId;
   if (!saveStore()) {
     db = previous;
     throw new Error("本机保存失败，训练包未载入；旧记录没有被覆盖。请查看页面上的存储错误。");
   }
   render();
+}
+function startNewSession() {
+  const current = activeSession();
+  if (!current) return;
+  interruptAudio();
+  const previous = structuredClone(db);
+  const session = makeSession(current.pack);
+  db.sessions[session.sessionId] = session;
+  db.activeSessionId = session.sessionId;
+  if (!saveStore()) {
+    db = previous;
+    $("dataStatus").textContent = "保存失败，未开启新一轮。旧进度仍在。";
+    return;
+  }
+  render();
+  $("dataStatus").textContent = `已开始独立的新一轮（${session.mode === "review" ? "复习" : "尚无既往听力记录"}）。旧轮次及记录仍保留。`;
 }
 function updateProgress() {
   const session = activeSession();
@@ -157,14 +225,20 @@ function selectCandidate(followup) {
   const item = currentItem();
   if (!session || !item) return null;
   const progress = session.progress;
+  if (hasPriorExposure(item, session.sessionId)) {
+    session.priorTargetByItem ||= {};
+    session.priorTargetByItem[item.id] = true;
+    session.mode = "review";
+  }
   const usedHere = progress.attempts.filter(a => a.itemId === item.id).map(a => a.candidateId);
   const ids = progress.candidateOrder[item.id];
-  const unseen = ids.filter(id => !usedHere.includes(id) && !db.seenCandidateIds.includes(id));
-  const preferred = followup ? unseen.filter(id => ["low_load_fallback", "fallback"].includes(item.candidates.find(c => c.id === id).content_role)) : unseen.filter(id => {
+  const available = ids.filter(id => !usedHere.includes(id));
+  const preferred = followup ? available.filter(id => ["low_load_fallback", "fallback"].includes(item.candidates.find(c => c.id === id).content_role)) : available.filter(id => {
     const role = item.candidates.find(c => c.id === id).content_role;
     return role === "initial" || role === "anchor";
   });
-  const id = preferred[0];
+  const id = preferred.find(candidateId => !db.seenCandidateIds.includes(candidateId)) ||
+    (session.priorTargetByItem?.[item.id] ? preferred[0] : null);
   if (!id) return null;
   progress.activeAttempt = {
     itemId: item.id, candidateId: id, selectedAt: now(), playCount: 0,
@@ -255,6 +329,15 @@ function playSentence() {
   if (!candidate || !targetPresent(currentItem(), candidate.text) || candidate.anchor_id !== currentItem().anchor_id) {
     blockCurrentItem("candidate_validation_failed"); return;
   }
+  if (attempt.playCount === 0) {
+    attempt.priorTargetExposure = hasPriorExposure(currentItem(), session.sessionId) || !!session.priorTargetByItem?.[currentItem().id];
+    if (attempt.priorTargetExposure) {
+      session.priorTargetByItem ||= {};
+      session.priorTargetByItem[currentItem().id] = true;
+      session.mode = "review";
+    }
+    attempt.reviewAtPlay = session.mode === "review";
+  }
   attempt.playCount += 1;
   attempt.lastPlayAt = now();
   attempt.voicesUsed = unique([...(attempt.voicesUsed || (attempt.voice ? [attempt.voice] : [])), $("voiceSelect").value]);
@@ -314,6 +397,8 @@ function finishAttempt() {
   const attempt = progress.activeAttempt;
   if (!attempt?.overallStatus) return;
   attempt.recordedAt = now();
+  attempt.localDate = localDate(attempt.recordedAt);
+  attempt.recordId ||= newId();
   attempt.supportUsed = supportForAttempt(attempt);
   progress.attempts.push(structuredClone(attempt));
   progress.activeAttempt = null;
@@ -400,16 +485,21 @@ function exportSession(session) {
   const attempts = progress.attempts.map((attempt, index) => {
     const item = session.pack.items.find(i => i.id === attempt.itemId);
     const candidate = item.candidates.find(c => c.id === attempt.candidateId);
+    const priorExposure = attempt.priorTargetExposure ?? (session.mode === "review" || !!session.priorTargetByItem?.[item.id]);
+    const reviewAtPlay = attempt.reviewAtPlay ?? (session.mode === "review");
     const exposureFlags = [
       ...(operationTestOnly ? ["prior_target_exposure"] : []),
-      ...(!operationTestOnly && attempt.playCount === 1 && !attempt.partialAudio && !attempt.textShown && !attempt.supportBefore.length && !progress.attempts.slice(0, index).some(a => a.itemId === item.id) ? ["first_unprompted"] : []),
+      ...(reviewAtPlay ? ["review_session"] : []),
+      ...(priorExposure ? ["prior_target_exposure"] : []),
+      ...(!operationTestOnly && !reviewAtPlay && !priorExposure && attempt.playCount === 1 && !attempt.partialAudio && !attempt.textShown && !attempt.supportBefore.length && !progress.attempts.slice(0, index).some(a => a.itemId === item.id) ? ["first_unprompted"] : []),
       ...(attempt.playCount > 1 ? ["replay_assisted"] : []),
       ...(attempt.partialAudio ? ["partial_audio_exposure"] : []),
       ...(attempt.textShown ? ["text_revealed"] : []),
       ...(attempt.supportBefore.some(s => ["spelling", "meaning", "target_audio"].includes(s)) ? ["post_feedback_immediate"] : [])
     ];
     return {
-      order: index + 1, item_id: item.id, candidate_id: candidate.id,
+      record_id: attempt.recordId, session_id: session.sessionId, pack_id: session.pack.pack_id,
+      local_date: attempt.localDate, order: index + 1, item_id: item.id, candidate_id: candidate.id,
       sentence: candidate.text, content_role: candidate.content_role,
       variation_dimensions: candidate.variation_dimensions,
       variation_detail: candidate.variation_detail,
@@ -477,42 +567,117 @@ function downloadData(data, filename, mime = "application/json") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function exportJson(fullBackup = false) {
-  const current = activeSession();
-  if (!fullBackup && !current) {
-    $("dataStatus").textContent = "还没有当前训练包，暂无本轮记录可导出。";
-    return;
-  }
   if (fullBackup && storageReadBlocked) {
     $("dataStatus").textContent = "旧记录读取异常，无法制作可靠备份。请先下载异常原始数据。";
     return;
   }
-  const documentData = fullBackup
-    ? { schema: "blind_listening_backup_v1", exported_at: now(), state: db }
-    : {
-      schema: "blind_listening_export_v1", exported_at: now(), export_scope: "current_session",
-      active_pack_id: db.activePackId, sessions: [exportSession(current)],
-      candidate_reuse_guard_ids: db.seenCandidateIds
+  if (fullBackup) {
+    downloadData(JSON.stringify({ schema: "blind_listening_backup_v2", exported_at: now(), state: db }, null, 2),
+      `blind-listening-full-backup-${localDate(now())}.json`);
+    $("dataStatus").textContent = "已尝试导出完整备份。请在“文件”中确认它已保存；备份含全部训练包和记录，不要误发给 Work。";
+    return;
+  }
+  if (storageReadBlocked) {
+    $("dataStatus").textContent = "旧记录读取异常，无法可靠生成增量回传。请先下载异常原始数据。";
+    return;
+  }
+  const acknowledged = new Set(db.acknowledgedRecordIds);
+  const sessions = Object.values(db.sessions).map(session => {
+    const all = exportSession(session);
+    const attempts = all.attempts.filter(attempt => !acknowledged.has(attempt.record_id));
+    if (!attempts.length) return null;
+    const itemIds = unique(attempts.map(attempt => attempt.item_id));
+    return {
+      session_id: session.sessionId, pack_id: session.pack.pack_id,
+      source_session_id: session.pack.source_session_id || null,
+      mode: session.mode, created_at: session.progress.createdAt,
+      evidence_scope: all.evidence_scope,
+      session_goal_by_item: Object.fromEntries(itemIds.map(id => [id, all.session_goal_by_item[id]])),
+      progress: all.progress,
+      unencountered_item_ids: all.unencountered_item_ids,
+      item_outcomes: Object.fromEntries(itemIds.filter(id => Object.hasOwn(all.item_outcomes, id)).map(id => [id, all.item_outcomes[id]])),
+      attempts
     };
-  downloadData(
-    JSON.stringify(documentData, null, 2),
-    `blind-listening-${fullBackup ? "full-backup" : "current-session"}-${new Date().toISOString().slice(0, 10)}.json`
-  );
-  $("dataStatus").textContent = fullBackup
-    ? "已导出可恢复的完整备份。请在“文件”中确认它已保存；备份含全部训练包和记录，不要误发给 Work。"
-    : "已导出本轮 JSON。发送给 Work 前请先查看文件内容；网页不会自动发送。";
+  }).filter(Boolean);
+  const recordIds = sessions.flatMap(session => session.attempts.map(attempt => attempt.record_id));
+  if (!recordIds.length) {
+    $("dataStatus").textContent = "没有尚未确认回传的已完成练习记录。进行练习后再导出；未完成的当前句会保留在进度中。";
+    return;
+  }
+  const previousExport = Object.entries(db.pendingExports).find(([, manifest]) =>
+    manifest.recordIds.length === recordIds.length && manifest.recordIds.every((id, index) => id === recordIds[index]));
+  const exportId = previousExport?.[0] || newId();
+  const exportedAt = previousExport?.[1].exportedAt || now();
+  const documentData = {
+    schema: "blind_listening_increment_v2", export_id: exportId, exported_at: exportedAt,
+    export_scope: "unacknowledged_completed_records", deduplicate_by: "record_id", record_count: recordIds.length,
+    sessions, candidate_reuse_guard_ids: db.seenCandidateIds
+  };
+  const previous = structuredClone(db.pendingExports);
+  db.pendingExports[exportId] = { recordIds, exportedAt };
+  if (!saveStore()) {
+    db.pendingExports = previous;
+    $("dataStatus").textContent = "本机保存失败，未导出增量回传。请立即导出完整备份并确认文件已保存。";
+    return;
+  }
+  downloadData(JSON.stringify(documentData, null, 2), `blind-listening-to-work-${localDate(exportedAt)}-${exportId.slice(0, 8)}.json`);
+  $("dataStatus").textContent = `已尝试导出 ${recordIds.length} 条待回传记录。请确认文件已保存并手动交给 Work；下载本身不会清除待回传记录。`;
+}
+async function confirmReturned(file) {
+  try {
+    if (file.size > MAX_BACKUP_BYTES) throw new Error("文件超过 25 MB。");
+    const report = JSON.parse(await file.text());
+    if (report?.schema !== "blind_listening_increment_v2" || typeof report.export_id !== "string") {
+      throw new Error("请选择此前导出的每日回传 JSON，而非完整备份。");
+    }
+    const ids = report.sessions?.flatMap(session => session.attempts?.map(attempt => attempt.record_id) || []) || [];
+    const pending = Object.hasOwn(db.pendingExports, report.export_id) ? db.pendingExports[report.export_id] : null;
+    if (!pending && ids.length && ids.every(id => db.acknowledgedRecordIds.includes(id))) {
+      $("dataStatus").textContent = "这份文件中的记录此前已确认回传，无需重复确认。";
+      return;
+    }
+    if (!pending) throw new Error("找不到这份导出文件的本机待确认记录，不能确认回传。");
+    if (ids.length !== pending.recordIds.length || ids.some((id, index) => id !== pending.recordIds[index])) {
+      throw new Error("文件中的记录编号与当时导出的清单不一致。");
+    }
+    const remaining = pending.recordIds.filter(id => !db.acknowledgedRecordIds.includes(id));
+    if (!remaining.length) {
+      $("dataStatus").textContent = "这份文件中的记录此前已确认回传，无需重复确认。";
+      return;
+    }
+    if (!window.confirm(`请先确认你已把这份 JSON 交给 Work。现在标记其中 ${remaining.length} 条记录为已回传？原始记录会保留。`)) return;
+    const previous = structuredClone(db.acknowledgedRecordIds);
+    const previousPending = structuredClone(db.pendingExports);
+    db.acknowledgedRecordIds = unique([...db.acknowledgedRecordIds, ...remaining]);
+    const acknowledged = new Set(db.acknowledgedRecordIds);
+    for (const [id, manifest] of Object.entries(db.pendingExports)) {
+      if (manifest.recordIds.every(recordId => acknowledged.has(recordId))) delete db.pendingExports[id];
+    }
+    if (!saveStore()) {
+      db.acknowledgedRecordIds = previous;
+      db.pendingExports = previousPending;
+      throw new Error("本机保存失败，回传进度没有更新。请保留导出文件。");
+    }
+    $("dataStatus").textContent = `已确认回传 ${remaining.length} 条记录。原始记录仍保留；之后新增的记录仍会出现在下一份增量文件中。`;
+  } catch (error) { $("dataStatus").textContent = `确认失败：${error.message}`; }
+  finally { $("confirmReturned").value = ""; }
 }
 function validateBackupState(state) {
-  if (!state || state.version !== 1 || !state.sessions || Array.isArray(state.sessions) ||
+  if (!state || state.version !== 2 || !state.sessions || Array.isArray(state.sessions) ||
       typeof state.sessions !== "object" || !Array.isArray(state.seenCandidateIds) ||
-      state.seenCandidateIds.some(id => typeof id !== "string")) throw new Error("备份的存储结构无效。");
+      state.seenCandidateIds.some(id => typeof id !== "string") ||
+      !Array.isArray(state.acknowledgedRecordIds) || !state.pendingExports ||
+      typeof state.pendingExports !== "object" || Array.isArray(state.pendingExports)) throw new Error("备份的存储结构无效。");
   const keys = Object.keys(state.sessions);
   if (keys.length > 1000) throw new Error("备份的训练轮次数量异常。");
-  if (state.activePackId !== null && (typeof state.activePackId !== "string" || !Object.hasOwn(state.sessions, state.activePackId))) {
-    throw new Error("备份的当前训练包编号无效。");
+  if (state.activeSessionId !== null && (typeof state.activeSessionId !== "string" || !Object.hasOwn(state.sessions, state.activeSessionId))) {
+    throw new Error("备份的当前轮次编号无效。");
   }
+  const recordIds = new Set();
   for (const key of keys) {
     const session = state.sessions[key];
-    if (UNSAFE_KEYS.has(key) || !session || !session.pack || !session.progress || key !== session.pack.pack_id) {
+    if (UNSAFE_KEYS.has(key) || !session || !session.pack || !session.progress || key !== session.sessionId ||
+        !["first_exposure", "review"].includes(session.mode)) {
       throw new Error("备份含无效训练轮次。");
     }
     validatePack(session.pack);
@@ -536,9 +701,24 @@ function validateBackupState(state) {
         throw new Error("备份的练习记录与训练包不匹配。");
       }
     }
+    for (const attempt of progress.attempts) {
+      if (typeof attempt.recordId !== "string" || !attempt.recordId || recordIds.has(attempt.recordId) ||
+          typeof attempt.localDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(attempt.localDate)) {
+        throw new Error("备份含重复或无效练习记录编号。");
+      }
+      recordIds.add(attempt.recordId);
+    }
     if (progress.feedbackEvents.some(event => !event || typeof event.itemId !== "string" || !Array.isArray(event.supportUsed))) {
       throw new Error("备份的反馈记录结构无效。");
     }
+  }
+  if (state.acknowledgedRecordIds.some(id => typeof id !== "string" || !recordIds.has(id)) ||
+      new Set(state.acknowledgedRecordIds).size !== state.acknowledgedRecordIds.length) {
+    throw new Error("备份的回传进度无效。");
+  }
+  for (const [id, manifest] of Object.entries(state.pendingExports)) {
+    if (UNSAFE_KEYS.has(id) || !manifest || !Array.isArray(manifest.recordIds) ||
+        manifest.recordIds.some(recordId => !recordIds.has(recordId))) throw new Error("备份的待确认导出清单无效。");
   }
   return state;
 }
@@ -546,8 +726,8 @@ async function importBackup(file) {
   try {
     if (file.size > MAX_BACKUP_BYTES) throw new Error("备份超过 25 MB，请勿导入。");
     const backup = JSON.parse(await file.text());
-    if (backup?.schema !== "blind_listening_backup_v1") throw new Error("这不是可恢复的完整备份文件。");
-    const restored = validateBackupState(backup.state);
+    if (!["blind_listening_backup_v1", "blind_listening_backup_v2"].includes(backup?.schema)) throw new Error("这不是可恢复的完整备份文件。");
+    const restored = validateBackupState(migrateStore(backup.state));
     if (Object.keys(db.sessions).length && !storageReadBlocked) {
       throw new Error("当前浏览器已有记录。为避免覆盖，请先在空白浏览器环境中恢复。");
     }
@@ -580,6 +760,17 @@ function exportDamagedRaw() {
 }
 function render() {
   const session = activeSession();
+  const sessionSelect = $("sessionSelect");
+  sessionSelect.replaceChildren();
+  for (const saved of Object.values(db.sessions)) {
+    const option = document.createElement("option");
+    option.value = saved.sessionId;
+    option.textContent = `${saved.pack.pack_id} · ${localDate(saved.progress.createdAt)} · ${saved.mode === "review" ? "复习" : "首次"} · ${saved.progress.stage === "complete" ? "已完成" : "可继续"} · ${saved.sessionId.slice(0, 8)}`;
+    sessionSelect.append(option);
+  }
+  sessionSelect.disabled = !session;
+  $("startNewSession").disabled = !session;
+  if (session) sessionSelect.value = session.sessionId;
   const voiceReady = !!(db.voice?.approved && db.voice.key === $("voiceSelect").value && selectedVoice());
   $("voiceCard").hidden = voiceReady;
   $("trainerCard").hidden = !voiceReady || !session;
@@ -606,7 +797,7 @@ function render() {
   $("continuePanel").hidden = stage !== "continue" || progress.paused;
   $("completePanel").hidden = stage !== "complete";
   $("completeMessage").textContent = storageProblem
-    ? "本机保存存在问题。关闭页面前请导出本轮 JSON，并检查文件确实保存。"
+    ? "本机保存存在问题。关闭页面前请导出完整备份，并检查文件确实保存。"
     : "结果已保存在当前浏览器。建议导出完整备份，并确认文件已保存。";
   $("targetFeedback").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "";
   if (stage === "rating") $("quickNote").value = attempt?.note || "";
@@ -621,11 +812,25 @@ async function importPack(file) {
     const pack = validatePack(JSON.parse(await file.text()));
     interruptAudio();
     setActivePack(pack);
-    $("dataStatus").textContent = "训练包已载入；旧记录仍在当前浏览器。本轮导出只含当前训练包。";
+    $("dataStatus").textContent = "训练包已载入。已有轮次会继续；需要重新练同一包时，请点“开始新一轮”。";
   } catch (error) { $("dataStatus").textContent = `导入失败：${error.message}`; }
   $("importPack").value = "";
 }
 function bindEvents() {
+  $("sessionSelect").addEventListener("change", () => {
+    interruptAudio();
+    const previous = db.activeSessionId;
+    db.activeSessionId = $("sessionSelect").value;
+    if (!saveStore()) {
+      db.activeSessionId = previous;
+      render();
+      $("dataStatus").textContent = "保存失败，未切换轮次。";
+      return;
+    }
+    selectedReason = activeSession()?.progress.activeAttempt?.draftReason || null;
+    render();
+  });
+  $("startNewSession").addEventListener("click", startNewSession);
   $("refreshVoices").addEventListener("click", refreshVoices);
   $("allowRemoteVoice").addEventListener("change", () => {
     interruptAudio();
@@ -673,6 +878,7 @@ function bindEvents() {
     refreshVoices();
   });
   $("exportJson").addEventListener("click", () => exportJson(false));
+  $("confirmReturned").addEventListener("change", event => { if (event.target.files[0]) confirmReturned(event.target.files[0]); });
   $("exportAllJson").addEventListener("click", () => exportJson(true));
   $("importBackup").addEventListener("change", event => { if (event.target.files[0]) importBackup(event.target.files[0]); });
   $("exportDamagedRaw").addEventListener("click", exportDamagedRaw);
@@ -683,7 +889,7 @@ function bindEvents() {
 async function init() {
   bindEvents();
   showStorageProblem();
-  if (!db.activePackId) {
+  if (!db.activeSessionId) {
     $("dataStatus").textContent = "此网页不附带训练包。请从手机“文件”中选择自己的 JSON 训练包。";
   } else {
     const progress = activeSession()?.progress;
