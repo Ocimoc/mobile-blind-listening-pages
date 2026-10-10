@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>英语盲听</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20261010-2">
 </head>
 <body>
   <main class="shell">
@@ -52,39 +52,44 @@
       </div>
       <p id="playStatus" class="status" role="status"></p>
 
-      <div class="quiet-tools">
-        <button id="showText" type="button" class="text-link" disabled>显示刚才的英文</button>
-        <p id="revealedText" class="revealed" hidden></p>
-      </div>
-
       <div id="ratingPanel" class="panel" hidden>
-        <p class="panel-title">刚才这一句</p>
+        <p class="panel-title">第 2 步：刚才这句，选一档</p>
+        <p class="muted">只选一次。选“直接懂”或“想了一下才懂”会立即保存；选“没听懂”后，还可以补充原因。</p>
         <div class="rating-grid">
           <button type="button" class="choice" data-rating="direct">直接懂</button>
           <button type="button" class="choice" data-rating="slow">想了一下才懂</button>
           <button type="button" class="choice" data-rating="not_understood">没听懂</button>
         </div>
-        <label class="field-label" for="quickNote">补充备注（可不填）</label>
-        <textarea id="quickNote" rows="2" placeholder="选完理解状态就会保存"></textarea>
+        <div class="quiet-tools">
+          <button id="showText" type="button" class="text-link" disabled>想看英文原句（可选，会记入记录）</button>
+          <p id="revealedText" class="revealed" hidden></p>
+        </div>
+        <label class="field-label" for="quickNote">可选备注：想写的话，请在选择上面三档前填写</label>
+        <textarea id="quickNote" rows="2" placeholder="不写也可以直接选一档"></textarea>
       </div>
 
       <div id="reasonPanel" class="panel" hidden>
-        <p class="panel-title">哪里卡住了？可以跳过</p>
-        <div class="reason-grid">
-          <button type="button" class="reason" data-reason="target_sound">目标声音没认出</button>
-          <button type="button" class="reason" data-reason="target_meaning">声音听到了，意思没想起</button>
-          <button type="button" class="reason" data-reason="background">外围词卡住</button>
-          <button type="button" class="reason" data-reason="integration">词似乎懂，整句没连上</button>
-          <button type="button" class="reason" data-reason="uncertain">说不清</button>
-        </div>
-        <label class="field-label" for="noteInput">补充备注（可不填）</label>
-        <textarea id="noteInput" rows="2" placeholder="例如：前半句听到了，后半句没跟上"></textarea>
-        <button id="saveMiss" type="button" class="button primary">保存这次反馈</button>
+        <p class="panel-title">已选“没听懂”</p>
+        <p class="muted">三档已经选完。原因只是补充，不想细分就直接点“保存这句”。</p>
+        <details id="reasonDetails" class="optional-reason">
+          <summary>补充哪里卡住了（可选）</summary>
+          <div class="reason-grid">
+            <button type="button" class="reason" data-reason="target_sound">目标声音没认出</button>
+            <button type="button" class="reason" data-reason="target_meaning">声音听到了，意思没想起</button>
+            <button type="button" class="reason" data-reason="background">外围词卡住</button>
+            <button type="button" class="reason" data-reason="integration">词似乎懂，整句没连上</button>
+            <button type="button" class="reason" data-reason="uncertain">说不清</button>
+          </div>
+          <label class="field-label" for="noteInput">补充备注（可不填）</label>
+          <textarea id="noteInput" rows="2" placeholder="例如：前半句听到了，后半句没跟上"></textarea>
+        </details>
+        <button id="saveMiss" type="button" class="button primary">保存这句：没听懂</button>
       </div>
 
       <div id="feedbackPanel" class="panel feedback" hidden>
-        <p class="panel-title">必要反馈</p>
+        <p class="panel-title">目标词提示</p>
         <p id="targetFeedback"></p>
+        <p class="muted">先听目标发音，再继续听另一句。</p>
         <div class="button-row">
           <button id="playTarget" type="button" class="button secondary">听目标发音</button>
           <button id="continueAfterFeedback" type="button" class="button primary">继续听新句</button>
@@ -97,36 +102,50 @@
       </div>
 
       <div id="completePanel" class="panel" hidden>
-        <h3>这次材料已到这里</h3>
+        <h3>这包练完了</h3>
         <p class="muted" id="completeMessage">结果已保存在当前浏览器。建议导出完整备份，并确认文件已保存。</p>
       </div>
     </section>
 
     <section class="card data-card">
       <div>
-        <h2>记录与训练包</h2>
-        <p class="muted">可从手机“文件”选择训练包，也可从聊天复制传输码后粘贴导入。训练包、轮次和记录分开保存；暂停后可跨天继续。每日回传会收集所有轮次中尚未确认回传的已完成记录，附带必要训练背景和历次已见候选句编号。下载后仍需手动交给 Work，再选择同一文件确认回传；原始记录不会删除。完整备份包含全部材料和进度，请单独保管。</p>
+        <h2>材料和记录</h2>
+        <p class="muted">先导入训练包、试听声音，再播放句子并选三档。练完后才需要下面的回传和备份。</p>
       </div>
-      <label class="field-label" for="sessionSelect">切换或继续训练轮次</label>
+      <p id="dataStatus" class="status" role="status"></p>
+      <label class="field-label" for="sessionSelect">当前训练轮次（中途回来可继续）</label>
       <select id="sessionSelect" aria-label="选择训练轮次"></select>
-      <div class="button-row">
-        <button id="startNewSession" type="button" class="button ghost">同一训练包开始新一轮</button>
-        <button id="exportJson" type="button" class="button secondary">导出待回传记录</button>
-        <label class="button ghost file-button">确认已交给 Work（选择已发送的 JSON）<input id="confirmReturned" type="file" accept=".json,application/json" hidden></label>
-        <button id="exportAllJson" type="button" class="button ghost">导出完整备份</button>
-        <label class="button ghost file-button">从完整备份恢复<input id="importBackup" type="file" accept=".json,application/json" hidden></label>
-        <label class="button ghost file-button">导入 Work 的新训练包<input id="importPack" type="file" accept=".json,application/json" hidden></label>
+      <div class="data-group">
+        <h3>导入训练包</h3>
+        <div class="button-row">
+          <label class="button ghost file-button">从手机“文件”选 JSON<input id="importPack" type="file" accept=".json,application/json" hidden></label>
+        </div>
+        <details class="paste-import">
+          <summary>从聊天粘贴训练包</summary>
+          <label class="field-label" for="packPaste">只粘贴完整的训练包 JSON 或以 BLP1: 开头的传输码</label>
+          <textarea id="packPaste" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里粘贴训练包"></textarea>
+          <button id="importPastedPack" type="button" class="button secondary">导入粘贴内容</button>
+        </details>
       </div>
-      <details class="paste-import">
-        <summary>从聊天粘贴训练包</summary>
-        <label class="field-label" for="packPaste">只粘贴完整的训练包 JSON 或以 BLP1: 开头的传输码</label>
-        <textarea id="packPaste" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里粘贴传输码或 JSON"></textarea>
-        <button id="importPastedPack" type="button" class="button secondary">导入粘贴内容</button>
+      <div class="data-group">
+        <h3>练完后：交回记录</h3>
+        <p class="muted">先下载未回传记录并交给 Work。确认交成功后，再选刚发出的那份 JSON 标记为已回传。下载本身不会改变回传状态。</p>
+        <div class="button-row">
+          <button id="exportJson" type="button" class="button secondary">下载未回传记录</button>
+          <label class="button ghost file-button">已交给 Work？选刚发出的 JSON 确认<input id="confirmReturned" type="file" accept=".json,application/json" hidden></label>
+        </div>
+      </div>
+      <details class="data-tools">
+        <summary>备份、恢复和重新练（需要时展开）</summary>
+        <div class="button-row">
+          <button id="exportAllJson" type="button" class="button ghost">下载完整备份</button>
+          <label class="button ghost file-button">从完整备份恢复<input id="importBackup" type="file" accept=".json,application/json" hidden></label>
+          <button id="startNewSession" type="button" class="button ghost">同一训练包重新练一轮</button>
+        </div>
       </details>
       <button id="exportDamagedRaw" type="button" class="button ghost" hidden>下载异常原始数据</button>
-      <p id="dataStatus" class="status" role="status"></p>
     </section>
   </main>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20261010-2" defer></script>
 </body>
 </html>

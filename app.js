@@ -377,6 +377,7 @@ function chooseRating(value) {
   if (value === "not_understood") {
     session.progress.stage = "reason";
     selectedReason = null;
+    $("reasonDetails").open = false;
     $("noteInput").value = $("quickNote").value;
     updateProgress();
   } else {
@@ -780,8 +781,8 @@ function render() {
   const attempt = progress.activeAttempt;
   const stage = progress.stage;
   $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} 项 / 共 ${session.pack.items.length} 项` : "本次结束";
-  $("stepTitle").textContent = stage === "complete" ? "本次材料已完成" : progress.paused ? "已暂停" : stage === "feedback" ? "看一下必要反馈" : stage === "continue" ? "准备换一句" : stage === "blocked" ? "需要新的训练句" : stage === "rating" || stage === "reason" ? "刚才听懂了吗？" : "准备听";
-  $("instruction").textContent = progress.paused ? "进度已保存。点击“继续”后仍从这里开始。" : "点击播放，听懂对方在问什么。不用回答英语。";
+  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "第 1 步：听一句", playing: "正在播放", rating: "第 2 步：选三档", reason: "保存“没听懂”", feedback: "目标词提示", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
+  $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "点“播放这一句”，只听意思，不用回答英语。", playing: "听完后，下方会出现三档理解状态。", rating: "只选一档；想重播就先点“重播”。", reason: "已经选了“没听懂”。可以直接保存，原因和备注都可不填。", feedback: "先听目标词的发音，再继续下一句。", continue: "这一句已保存，点下面继续听另一句。", blocked: "没有合格的新句；可导出记录交给 Work 补充材料。", complete: "记录已保存。需要交给 Work 时，点下方“下载未回传记录”。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
   $("playSentence").disabled = !controlsEnabled || stage !== "ready";
@@ -798,12 +799,12 @@ function render() {
   $("completePanel").hidden = stage !== "complete";
   $("completeMessage").textContent = storageProblem
     ? "本机保存存在问题。关闭页面前请导出完整备份，并检查文件确实保存。"
-    : "结果已保存在当前浏览器。建议导出完整备份，并确认文件已保存。";
+    : "记录已保存在当前浏览器。下方可以下载未回传记录；完整备份在“备份、恢复和重新练”里。";
   $("targetFeedback").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "";
   if (stage === "rating") $("quickNote").value = attempt?.note || "";
   if (stage === "reason") $("noteInput").value = attempt?.note || "";
-  $("continueMessage").textContent = stage === "continue" ? "原因尚不确定。下一句会更简短，不把这次直接算成目标词失败。" : "";
-  $("playStatus").textContent = stage === "playing" ? "正在朗读…" : stage === "rating" ? "可以重播，或直接选刚才的理解状态。" : stage === "blocked" ? "候选句不足。请导出记录交给 Work 补充。" : "";
+  $("continueMessage").textContent = stage === "continue" ? "这句已记下。下一句会更简短，先不把这次当成目标词没掌握。" : "";
+  $("playStatus").textContent = stage === "playing" ? "正在朗读…" : stage === "rating" ? "听完了：现在选下面三档中的一档。" : stage === "blocked" ? "候选句不足。请导出记录交给 Work 补充。" : "";
   document.querySelectorAll(".reason").forEach(button => button.classList.toggle("selected", button.dataset.reason === selectedReason));
 }
 function decodePastedPack(input) {
@@ -916,7 +917,7 @@ async function init() {
   bindEvents();
   showStorageProblem();
   if (!db.activeSessionId) {
-    $("dataStatus").textContent = "此网页不附带训练包。可从手机“文件”选择 JSON，或从聊天粘贴训练包。";
+    $("dataStatus").textContent = "还没有训练包：从手机“文件”选 JSON，或展开“从聊天粘贴训练包”。";
   } else {
     const progress = activeSession()?.progress;
     selectedReason = progress?.activeAttempt?.draftReason || null;
