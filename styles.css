@@ -52,10 +52,11 @@ textarea { resize: vertical; }
 .data-group h3 { font-size: 1rem; margin-bottom: 8px; }
 .data-group .button-row { margin-top: 10px; }
 .data-tools { border-top: 1px solid #e1e8eb; padding-top: 15px; }
-.data-tools summary, .optional-reason summary { cursor: pointer; color: #145b69; font-weight: 650; }
+.data-tools summary, .optional-reason summary, .optional-note summary { cursor: pointer; color: #145b69; font-weight: 650; }
 .data-tools .button-row { margin-top: 12px; }
 .optional-reason { margin: 12px 0 15px; }
 .optional-reason .reason-grid { margin-top: 12px; }
+.optional-note { margin-top: 12px; }
 .paste-import { width: 100%; margin-top: 12px; }
 .paste-import summary { cursor: pointer; color: #145b69; font-weight: 650; }
 .paste-import textarea { margin-bottom: 9px; }

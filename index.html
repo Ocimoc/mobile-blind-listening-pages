@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>英语盲听</title>
-  <link rel="stylesheet" href="styles.css?v=20261010-2">
+  <link rel="stylesheet" href="styles.css?v=20261010-3">
 </head>
 <body>
   <main class="shell">
@@ -64,8 +64,11 @@
           <button id="showText" type="button" class="text-link" disabled>想看英文原句（可选，会记入记录）</button>
           <p id="revealedText" class="revealed" hidden></p>
         </div>
-        <label class="field-label" for="quickNote">可选备注：想写的话，请在选择上面三档前填写</label>
-        <textarea id="quickNote" rows="2" placeholder="不写也可以直接选一档"></textarea>
+        <details class="optional-note">
+          <summary>写一句备注（可选，选档前填写）</summary>
+          <label class="field-label" for="quickNote">补充备注</label>
+          <textarea id="quickNote" rows="2" placeholder="不写也可以直接选一档"></textarea>
+        </details>
       </div>
 
       <div id="reasonPanel" class="panel" hidden>
@@ -110,7 +113,7 @@
     <section class="card data-card">
       <div>
         <h2>材料和记录</h2>
-        <p class="muted">先导入训练包、试听声音，再播放句子并选三档。练完后才需要下面的回传和备份。</p>
+        <p class="muted">先试听上方的英语声音，再在这里导入训练包。导入后回到上方：播放一句、选三档。练完后再处理回传和备份。</p>
       </div>
       <p id="dataStatus" class="status" role="status"></p>
       <label class="field-label" for="sessionSelect">当前训练轮次（中途回来可继续）</label>
@@ -146,6 +149,6 @@
       <button id="exportDamagedRaw" type="button" class="button ghost" hidden>下载异常原始数据</button>
     </section>
   </main>
-  <script src="app.js?v=20261010-2" defer></script>
+  <script src="app.js?v=20261010-3" defer></script>
 </body>
 </html>

@@ -827,7 +827,7 @@ function loadPackText(text) {
   const pack = validatePack(JSON.parse(text));
   interruptAudio();
   setActivePack(pack);
-  $("dataStatus").textContent = "训练包已载入。已有轮次会继续；需要重新练同一包时，请点“开始新一轮”。";
+  $("dataStatus").textContent = "训练包已载入。请回到上方：未确认声音先试听；已确认则点“播放这一句”。已有轮次会继续。";
 }
 function importPastedPack() {
   try {
