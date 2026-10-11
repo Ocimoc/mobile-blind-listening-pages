@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>英语盲听</title>
-  <link rel="stylesheet" href="styles.css?v=20261011-2">
+  <link rel="stylesheet" href="styles.css?v=20261011-4">
 </head>
 <body>
   <main class="shell">
@@ -32,6 +32,7 @@
     </section>
 
     <div id="trainView" class="view">
+      <p id="trainNotice" class="import-status" role="status" hidden></p>
       <section class="card home-card" id="homeCard">
         <h2 id="homeTitle">开始训练</h2>
         <p id="homeSummary" class="muted"></p>
@@ -168,6 +169,7 @@
             <button id="importPastedPack" type="button" class="button primary">导入训练包</button>
             <label class="button ghost file-button">或从手机“文件”选 JSON<input id="importPack" type="file" accept=".json,application/json" hidden></label>
           </div>
+          <p id="importStatus" class="import-status" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
       <div class="data-group">
@@ -207,6 +209,6 @@
       </section>
     </div>
   </main>
-  <script src="app.js?v=20261011-3" defer></script>
+  <script src="app.js?v=20261011-4" defer></script>
 </body>
 </html>

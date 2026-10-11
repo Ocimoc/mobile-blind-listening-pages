@@ -82,6 +82,8 @@ async function run() {
   assert.equal(pasted.eval("activeSession().pack.pack_id"), phonePack.pack_id, "bad code does not replace active pack");
   assert.equal(pasted.element("packPaste").value, "BLP1:broken", "failed paste remains editable");
   assert.match(pasted.element("dataStatus").textContent, /导入失败/);
+  assert.equal(pasted.element("importStatus").hidden, false, "import error is shown beside the button");
+  assert.match(pasted.element("importStatus").textContent, /导入失败/);
   const plain = harness();
   plain.element("packPaste").value = `\`\`\`json\n${JSON.stringify(phonePack)}\n\`\`\``;
   plain.eval("importPastedPack()");

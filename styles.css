@@ -22,6 +22,8 @@ h3 { margin: 0 0 6px; }
 .home-card .button { min-height: 48px; }
 .muted { color: #5b6d77; line-height: 1.55; margin: 4px 0 16px; }
 .status { min-height: 1.35em; color: #236173; font-size: .9rem; margin: 10px 0 0; }
+.import-status { margin: 12px 0 0; padding: 11px 12px; border-radius: 10px; background: #eaf5f1; color: #205944; line-height: 1.45; }
+.import-status.error { background: #fff0e9; color: #722d16; }
 .storage-warning { color: #722d16; background: #fff0e9; border: 1px solid #e8b8a4; border-radius: 12px; padding: 13px 16px; line-height: 1.5; }
 .field-label { display: block; font-weight: 650; font-size: .9rem; margin: 16px 0 7px; }
 .voice-consent { display: flex; align-items: flex-start; gap: 8px; margin-top: 13px; color: #5b4733; font-size: .88rem; line-height: 1.4; }

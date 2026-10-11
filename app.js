@@ -382,6 +382,7 @@ function playSentence() {
   const session = activeSession();
   if (!session || session.progress.paused || !["ready", "rating"].includes(session.progress.stage)) return;
   if (!db.voice?.approved || db.voice.key !== $("voiceSelect").value) return;
+  $("trainNotice").hidden = true;
   if (!session.progress.activeAttempt && !selectCandidate(false)) { if (!storageProblem) blockCurrentItem("no_unseen_candidate"); return; }
   const beforePlay = structuredClone(db);
   const attempt = session.progress.activeAttempt;
@@ -1080,7 +1081,9 @@ function decodePastedPack(input) {
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length > Math.ceil(MAX_PACK_BYTES * 4 / 3) + 4) {
       throw new Error("传输码格式或长度无效。");
     }
-    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    let bytes;
+    try { bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0)); }
+    catch (_) { throw new Error("传输码不完整或被改动。请从 BLP1: 开头重新复制到最后一个字符。"); }
     if (bytes.length > MAX_PACK_BYTES) throw new Error("训练包超过 2 MB，请勿导入。");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
@@ -1088,22 +1091,39 @@ function decodePastedPack(input) {
   return value;
 }
 function loadPackText(text) {
-  const pack = validatePack(JSON.parse(text));
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (_) { throw new Error("内容不完整或不是训练包。请重新复制完整传输码或 JSON。"); }
+  const pack = validatePack(parsed);
   interruptAudio();
   setActivePack(pack);
   $("dataStatus").textContent = `训练包 ${pack.pack_id} 已载入；已有轮次会继续，历史记录保留。`;
+  $("trainNotice").textContent = "训练包已导入。先试听并确认英语声音，然后播放第一句。";
+  $("trainNotice").hidden = false;
+  return pack;
+}
+function showImportStatus(message, error = false) {
+  $("dataStatus").textContent = message;
+  $("importStatus").textContent = message;
+  $("importStatus").classList.toggle("error", error);
+  $("importStatus").hidden = false;
 }
 function importPastedPack() {
   try {
-    loadPackText(decodePastedPack($("packPaste").value));
+    if (!$("packPaste").value.trim()) throw new Error("还没有粘贴训练包。");
+    showImportStatus("正在导入训练包…");
+    const pack = loadPackText(decodePastedPack($("packPaste").value));
     $("packPaste").value = "";
-  } catch (error) { $("dataStatus").textContent = `导入失败：${error.message}`; }
+    showImportStatus(`已导入 ${pack.pack_id}，页面已切回训练。`);
+  } catch (error) { showImportStatus(`导入失败：${error.message}`, true); }
 }
 async function importPack(file) {
   try {
     if (file.size > MAX_PACK_BYTES) throw new Error("训练包超过 2 MB，请勿导入。");
-    loadPackText(await file.text());
-  } catch (error) { $("dataStatus").textContent = `导入失败：${error.message}`; }
+    showImportStatus("正在导入训练包…");
+    const pack = loadPackText(await file.text());
+    showImportStatus(`已导入 ${pack.pack_id}，页面已切回训练。`);
+  } catch (error) { showImportStatus(`导入失败：${error.message}`, true); }
   $("importPack").value = "";
 }
 function bindEvents() {

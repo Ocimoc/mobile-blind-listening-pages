@@ -30,9 +30,26 @@ async function run() {
     assert.equal(await page.locator("#homeTitle").innerText(), "还没有训练包");
     await page.locator("#homeAction").click();
     assert.equal(await page.locator("#materialsView").isVisible(), true);
+    if (process.env.BLP_DAY1_TRANSFER_PATH) {
+      const longCode = fs.readFileSync(process.env.BLP_DAY1_TRANSFER_PATH, "utf8");
+      assert.ok(longCode.length > 6000, "exercise a real long transfer code");
+      await page.locator("#packPaste").fill(longCode);
+      await page.locator("#importPastedPack").click();
+      assert.equal(await page.locator("#trainView").isVisible(), true);
+      assert.match(await page.locator("#homeSummary").innerText(), /INTERVIEW-LISTEN-DAY1-20261011-01/);
+      assert.equal(await page.locator("#trainNotice").isVisible(), true);
+      await page.evaluate(() => localStorage.clear());
+      await page.reload();
+      await page.locator("#homeAction").click();
+    }
+    await page.locator("#packPaste").fill("BLP1:broken");
+    await page.locator("#importPastedPack").click();
+    assert.equal(await page.locator("#importStatus").isVisible(), true);
+    assert.match(await page.locator("#importStatus").innerText(), /导入失败/);
     await page.locator("#packPaste").fill(JSON.stringify(pack));
     await page.locator("#importPastedPack").click();
     assert.equal(await page.locator("#trainView").isVisible(), true);
+    assert.equal(await page.locator("#trainNotice").isVisible(), true);
     await page.locator("#previewVoice").click();
     await page.locator("#approveVoice").click();
     assert.equal(await page.locator("#trainerCard").isVisible(), true);
