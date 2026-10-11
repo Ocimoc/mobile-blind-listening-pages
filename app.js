@@ -232,6 +232,9 @@ function makeSession(pack) {
 }
 function setActivePack(pack) {
   validatePack(pack);
+  if (DEMO_MODE && pack.evidence_scope === "session_observation") {
+    throw new Error("演示页面不能导入正式训练包。请打开不带 ?demo=1 的正式网址。");
+  }
   const existing = Object.values(db.sessions).filter(session => session.pack.pack_id === pack.pack_id);
   if (existing.some(session => JSON.stringify(session.pack) !== JSON.stringify(pack))) {
     throw new Error("这个训练包编号已有不同内容。请让 Work 为修订包使用新编号，避免混淆旧记录。");
@@ -638,7 +641,7 @@ function interpretedLayers(attempt) {
 function exportSession(session) {
   const progress = session.progress;
   // A pack must explicitly opt into session observation; older pilot packs remain test-only.
-  const operationTestOnly = session.pack.evidence_scope !== "session_observation";
+  const operationTestOnly = DEMO_MODE || session.pack.evidence_scope !== "session_observation";
   const itemIds = session.pack.items.map(i => i.id);
   const pending = progress.activeAttempt;
   const attempts = progress.attempts.map((attempt, index) => {

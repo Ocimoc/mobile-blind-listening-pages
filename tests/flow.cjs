@@ -8,8 +8,9 @@ const app = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 const { pack, phonePack, simplePack, twoItemPack } = require("./fixtures.cjs");
 const KEY = "english-blind-listening-v1";
 
-function harness(initial = null) {
-  const saved = new Map(initial ? [[KEY, JSON.stringify(initial)]] : []);
+function harness(initial = null, query = "") {
+  const storeKey = query === "?demo=1" ? "english-blind-listening-demo-v1" : KEY;
+  const saved = new Map(initial ? [[storeKey, JSON.stringify(initial)]] : []);
   const elements = new Map();
   const downloads = [];
   let failWrites = false;
@@ -38,7 +39,7 @@ function harness(initial = null) {
     body: { append() {} }, hidden: false, addEventListener() {}
   };
   const synth = { getVoices: () => [{ name: "Local English", lang: "en-US", localService: true }], cancel() {}, speak() {} };
-  const window = { speechSynthesis: synth, confirm: () => true, addEventListener() {} };
+  const window = { speechSynthesis: synth, confirm: () => true, addEventListener() {}, location: { search: query } };
   const navigator = { clipboard: { async writeText(value) { if (clipboardFails) throw new Error("denied"); clipboardText = value; } } };
   const context = vm.createContext({
     console, document, window, navigator, localStorage: storage, crypto, structuredClone, Blob, atob, TextEncoder, TextDecoder,
@@ -62,6 +63,13 @@ function harness(initial = null) {
 }
 
 async function run() {
+  const demo = harness(null, "?demo=1");
+  const formalPack = structuredClone(pack);
+  formalPack.evidence_scope = "session_observation";
+  demo.context.formalPack = formalPack;
+  assert.throws(() => demo.eval("setActivePack(formalPack)"), /演示页面不能导入正式训练包/);
+  assert.equal(demo.eval("Object.keys(db.sessions).length"), 1, "rejected import leaves the demo session alone");
+  assert.equal(demo.eval("activeSession().pack.evidence_scope"), "operation_test_only");
   const pasted = harness();
   const transferCode = `BLP1:${Buffer.from(JSON.stringify(phonePack)).toString("base64")}`;
   pasted.element("packPaste").value = transferCode;
