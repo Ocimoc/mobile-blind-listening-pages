@@ -125,11 +125,12 @@ async function run() {
     await page.locator("#playSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     await page.locator('[data-rating="direct"]').click();
-    assert.equal(await page.locator("#spellingPanel").isVisible(), true);
-    assert.equal(await page.locator("#answerPanel").isVisible(), false);
+    assert.equal(await page.locator("#answerPanel").isVisible(), true);
+    assert.equal(await page.locator("#sentenceMeaning").innerText(), "台灯亮着。");
+    assert.match(await page.locator("#targetFeedback").innerText(), /lamp：台灯/);
+    if (process.env.BLP_ANSWER_SCREENSHOT) await page.screenshot({ path: process.env.BLP_ANSWER_SCREENSHOT, fullPage: true });
     await page.reload();
-    assert.equal(await page.locator("#spellingPanel").isVisible(), true, "demo judgement survives refresh");
-    await page.locator("#revealMeaning").click();
+    assert.equal(await page.locator("#answerPanel").isVisible(), true, "demo judgement and meaning survive refresh");
     await page.locator("#answerPanel [data-play-next]").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     assert.match(await page.locator("#progressLabel").innerText(), /第 2 \/ 5 项/);
@@ -145,7 +146,7 @@ async function run() {
     assert.equal(await page.locator('[data-rating="slow"]').isVisible(), false);
     await page.locator('[data-rating="direct"]').click();
     assert.equal(await page.evaluate(() => activeSession().progress.activeAttempt.overallStatus), "slow");
-    assert.equal(await page.locator("#spellingPanel").isVisible(), true);
+    assert.equal(await page.locator("#answerPanel").isVisible(), true);
     const priorDemoSession = await page.evaluate(() => activeSession().sessionId);
     await page.locator("#restartDemo").click();
     assert.notEqual(await page.evaluate(() => activeSession().sessionId), priorDemoSession);

@@ -91,6 +91,16 @@ async function run() {
   plain.element("packPaste").value = `\`\`\`json\n${JSON.stringify(phonePack)}\n\`\`\``;
   plain.eval("importPastedPack()");
   assert.equal(plain.eval("activeSession().pack.pack_id"), phonePack.pack_id, "fenced JSON imports too");
+  const addMeanings = harness();
+  const withoutMeanings = structuredClone(simplePack);
+  for (const item of withoutMeanings.items) for (const candidate of item.candidates) delete candidate.translation_zh;
+  addMeanings.context.withoutMeanings = withoutMeanings;
+  addMeanings.context.enrichedPack = simplePack;
+  addMeanings.eval("setActivePack(withoutMeanings); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'direct'; finishAttempt()");
+  const oldRecord = JSON.stringify(addMeanings.eval("activeSession().progress.attempts[0]"));
+  addMeanings.eval("setActivePack(enrichedPack)");
+  assert.equal(addMeanings.eval("activeSession().pack.items[0].candidates[0].translation_zh"), "请开灯。", "translation-only reimport enriches existing pack");
+  assert.equal(JSON.stringify(addMeanings.eval("activeSession().progress.attempts[0]")), oldRecord, "reimport does not rewrite completed records");
   const simplePackText = JSON.stringify(simplePack);
   const simple = harness();
   simple.element("packPaste").value = simplePackText;
@@ -317,8 +327,9 @@ async function run() {
   const oneClick = harness();
   oneClick.eval("setActivePack(pack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'");
   oneClick.eval("chooseRating('direct')");
-  assert.equal(oneClick.eval("activeSession().progress.stage"), "spelling", "one tap shows the original sentence");
+  assert.equal(oneClick.eval("activeSession().progress.stage"), "answer", "understood immediately shows the original sentence and meaning");
   assert.equal(oneClick.eval("activeSession().progress.activeAttempt.textShown"), true);
+  assert.equal(oneClick.eval("activeSession().progress.activeAttempt.answerShown"), true);
   const afterJudgment = harness(JSON.parse(oneClick.saved.get(KEY)));
   assert.equal(afterJudgment.eval("activeSession().progress.activeAttempt.overallStatus"), "direct", "unfinished judged item survives refresh");
   const judgedBackupSource = harness(JSON.parse(oneClick.saved.get(KEY)));
@@ -327,7 +338,7 @@ async function run() {
   const judgedRestored = harness();
   judgedRestored.context.judgedBackupFile = judgedRestored.file(judgedBackup);
   await judgedRestored.eval("importBackup(judgedBackupFile)");
-  assert.equal(judgedRestored.eval("activeSession().progress.stage"), "spelling", "full backup preserves a one-tap saved judgment");
+  assert.equal(judgedRestored.eval("activeSession().progress.stage"), "answer", "full backup preserves a one-tap saved judgment");
   afterJudgment.eval("startCorrection(); chooseRating('slow'); finishAttempt()");
   assert.equal(afterJudgment.eval("activeSession().progress.attempts.length"), 1, "correction does not duplicate the record");
   assert.equal(afterJudgment.eval("activeSession().progress.attempts[0].firstJudgment.understanding"), "direct");
@@ -362,8 +373,8 @@ async function run() {
   const judgedReplay = harness();
   judgedReplay.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct')");
   assert.equal(judgedReplay.spokenTexts().at(-1), judgedReplay.eval("currentCandidate().text"));
-  assert.equal(judgedReplay.eval("activeSession().progress.stage"), "spelling");
-  assert.equal(judgedReplay.eval("activeSession().progress.activeAttempt.answerShown"), undefined, "understood meaning waits for learner tap");
+  assert.equal(judgedReplay.eval("activeSession().progress.stage"), "answer");
+  assert.equal(judgedReplay.eval("activeSession().progress.activeAttempt.answerShown"), true, "understood meaning appears immediately");
   judgedReplay.finishSpeech();
   judgedReplay.eval("finishAttempt(); exportJson(false)");
   const judgedRecord = (await judgedReplay.lastDownload()).sessions[0].attempts[0];

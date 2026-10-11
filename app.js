@@ -21,17 +21,17 @@ const COPY_LIMIT = 60000;
 const DEMO_PACK = {
   schema_version: 1, pack_id: "DEMO-INTERACTION-20261011", evidence_scope: "operation_test_only",
   items: [
-    ["lamp", "Word", "The lamp is on.", "台灯"],
-    ["turn on", "Chunk", "Please turn on the fan.", "打开；开启"],
-    ["borrow", "Word", "Can I borrow this book?", "借入"],
-    ["in front of", "Chunk", "The box is in front of the door.", "在……前面"],
-    ["arrive", "Word", "We will arrive at noon.", "到达"]
-  ].map(([target, kind, sentence, meaning], index) => ({
+    ["lamp", "Word", "The lamp is on.", "台灯", "台灯亮着。"],
+    ["turn on", "Chunk", "Please turn on the fan.", "打开；开启", "请打开风扇。"],
+    ["borrow", "Word", "Can I borrow this book?", "借入", "我可以借这本书吗？"],
+    ["in front of", "Chunk", "The box is in front of the door.", "在……前面", "箱子在门前。"],
+    ["arrive", "Word", "We will arrive at noon.", "到达", "我们会在中午到达。"]
+  ].map(([target, kind, sentence, meaning, translation], index) => ({
     id: `DEMO-ITEM-${index + 1}`, kind, target, locked_meaning_or_function: meaning,
     training_focus: "演示手机交互", session_goal: "试用页面按钮", use_anchor: "虚构日常句",
     anchor_id: `DEMO-ANCHOR-${index + 1}`, max_observations: 1,
     feedback: { spelling: target, meaning },
-    candidates: [{ id: `DEMO-SENTENCE-${index + 1}`, text: sentence, content_role: "initial",
+    candidates: [{ id: `DEMO-SENTENCE-${index + 1}`, text: sentence, translation_zh: translation, content_role: "initial",
       variation_dimensions: [], anchor_id: `DEMO-ANCHOR-${index + 1}`, work_reviewed: true }]
   }))
 };
@@ -184,6 +184,9 @@ function validatePack(pack) {
       if (!candidate.text.trim() || /[\r\n]/.test(candidate.text) || /[.!?]\s+\S/.test(candidate.text) || !/[.!?]$/.test(candidate.text.trim())) {
         throw new Error(`候选句 ${candidate.id} 必须是单条完整英文句子。`);
       }
+      if (candidate.translation_zh !== undefined && (typeof candidate.translation_zh !== "string" || !candidate.translation_zh.trim() || candidate.translation_zh.length > 500)) {
+        throw new Error(`候选句 ${candidate.id} 的整句中文意思无效。`);
+      }
       if (!targetPresent(item, candidate.text)) throw new Error(`候选句 ${candidate.id} 缺少完整目标形式。`);
       if (candidate.anchor_id !== item.anchor_id || candidate.work_reviewed !== true) throw new Error(`候选句 ${candidate.id} 尚未确认用途边界。`);
       if (!Array.isArray(candidate.variation_dimensions) || candidate.variation_dimensions.some(v => !VARIATION_KEYS.has(v))) throw new Error("变化维度无效。");
@@ -197,6 +200,13 @@ function validatePack(pack) {
     }
   }
   return pack;
+}
+function packWithoutSentenceMeanings(pack) {
+  const copy = structuredClone(pack);
+  for (const item of copy.items) for (const candidate of item.candidates) delete candidate.translation_zh;
+  const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+  return JSON.stringify(sorted(copy));
 }
 function hasPriorExposure(item, currentSessionId = null) {
   const current = currentSessionId ? db.sessions[currentSessionId] : null;
@@ -243,14 +253,23 @@ function setActivePack(pack) {
     throw new Error("演示页面不能导入正式训练包。请打开不带 ?demo=1 的正式网址。");
   }
   const existing = Object.values(db.sessions).filter(session => session.pack.pack_id === pack.pack_id);
-  if (existing.some(session => JSON.stringify(session.pack) !== JSON.stringify(pack))) {
+  if (existing.some(session => packWithoutSentenceMeanings(session.pack) !== packWithoutSentenceMeanings(pack))) {
     throw new Error("这个训练包编号已有不同内容。请让 Work 为修订包使用新编号，避免混淆旧记录。");
+  }
+  for (const saved of existing) for (let i = 0; i < pack.items.length; i++) for (let j = 0; j < pack.items[i].candidates.length; j++) {
+    const oldMeaning = saved.pack.items[i].candidates[j].translation_zh;
+    const newMeaning = pack.items[i].candidates[j].translation_zh;
+    if (oldMeaning && newMeaning && oldMeaning !== newMeaning) throw new Error("同编号训练包已有不同的整句中文意思。请让 Work 核对后使用新编号；旧记录没有改变。");
   }
   const oldCandidates = new Map(Object.values(db.sessions).flatMap(session => session.pack.items.flatMap(item => item.candidates.map(candidate => [candidate.id, candidate.text]))));
   if (pack.items.some(item => item.candidates.some(candidate => oldCandidates.has(candidate.id) && oldCandidates.get(candidate.id) !== candidate.text))) {
     throw new Error("候选句编号已被其他内容使用。请让 Work 为新句换编号；旧记录没有改变。");
   }
   const previous = structuredClone(db);
+  for (const saved of existing) for (let i = 0; i < pack.items.length; i++) for (let j = 0; j < pack.items[i].candidates.length; j++) {
+    const newMeaning = pack.items[i].candidates[j].translation_zh;
+    if (newMeaning) saved.pack.items[i].candidates[j].translation_zh = newMeaning;
+  }
   const session = existing.at(-1) || makeSession(pack);
   db.sessions[session.sessionId] = session;
   db.activeSessionId = session.sessionId;
@@ -475,6 +494,10 @@ function chooseRating(value) {
     attempt.note = $("quickNote").value.trim() || attempt.note || "";
     attempt.textShown = true;
     attempt.textShownAfterJudgment = true;
+    if (status !== "not_understood" && !attempt.answerShown) {
+      attempt.answerShown = true;
+      attempt.answerShownAt = now();
+    }
     session.progress.stage = attempt.answerShown ? "answer" : "spelling";
   })) return;
   if (firstSelection) {
@@ -1076,7 +1099,7 @@ function render() {
   const activeTask = item ? taskType(item) : null;
   const taskLabels = { word: "单词听辨", chunk: "词块听辨", in_sentence_recognition: "句中识别", sentence_understanding: "整句理解" };
   $("progressLabel").textContent = item ? `本包第 ${progress.itemIndex + 1} / ${session.pack.items.length} 项 · ${taskLabels[activeTask]}` : "本包已完成";
-  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "看正确意思", feedback: "看刚才的反馈", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
+  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "核对刚才这句", feedback: "看刚才的反馈", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
   $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "这是旧轮次留下的步骤，可核对这句。", spelling: attempt?.overallStatus === "not_understood" ? "已显示原句并重读整句；意思会自动出现，也可立即点“看这句的意思”。" : "已显示原句并重读整句；准备好时点“看这句的意思”。", answer: "核对后再继续下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
@@ -1106,6 +1129,7 @@ function render() {
   });
   $("answerPanel").hidden = stage !== "answer" || progress.paused;
   $("answerEnglish").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
+  $("sentenceMeaning").textContent = currentCandidate()?.translation_zh || "当前训练包还没有这句的中文意思，请导入补充了整句意思的同一训练包。";
   const finalItem = progress.itemIndex === session.pack.items.length - 1 &&
     (attempt?.overallStatus !== "not_understood" || progress.attempts.filter(a => a.itemId === item?.id).length + 1 >= item?.max_observations);
   document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "保存这题并结束本轮" : "保存这题并播放下一句"; });

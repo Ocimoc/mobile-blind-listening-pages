@@ -4,7 +4,7 @@
 
 ## 输入训练包
 
-沿用 `schema_version: 1`。`pack_id` 标识材料，`session_id` 由网页独立生成。每个 item 沿用 `id`、`kind`（`Word`、`Chunk`、`Frame`）、`target`、`training_focus`、`session_goal`、`use_anchor`、`anchor_id`、`feedback`、`candidates` 等字段。可新增可选 `task_type`：`word`、`chunk`、`in_sentence_recognition`、`sentence_understanding`；旧包未提供时按 `kind` 推断。`feedback.details` 可提供额外说明，必须是字符串。
+沿用 `schema_version: 1`。`pack_id` 标识材料，`session_id` 由网页独立生成。每个 item 沿用 `id`、`kind`（`Word`、`Chunk`、`Frame`）、`target`、`training_focus`、`session_goal`、`use_anchor`、`anchor_id`、`feedback`、`candidates` 等字段。可新增可选 `task_type`：`word`、`chunk`、`in_sentence_recognition`、`sentence_understanding`；旧包未提供时按 `kind` 推断。`feedback.details` 可提供额外说明，必须是字符串。每条候选句可提供 `translation_zh`，只用于显示对应原句的完整中文意思；缺少时网页明确提示，不会拿目标释义代替。重新导入同编号且只补该字段的包，会更新会话所持材料，不改已完成练习记录。
 
 每个候选句仍须完整、含目标、编号不重复且经过 `work_reviewed: true`。相同 `pack_id` 的不同内容会拒绝导入；旧候选句编号若对应不同文本也会拒绝。重复导入同一包会继续已存轮次，不删除历史。导入区不会预览英文目标句。
 
@@ -30,6 +30,8 @@
 | `app_observed.selected_at`, `judged_at`, `recorded_at` | 选中材料、判断和完成记录的时间。 |
 
 `understanding` 在新记录中为 `direct`、`slow`、`not_understood` 或 `skipped`。主界面只让用户选择“马上懂了／后来才懂／还没懂”。没懂的具体原因可在英文反馈中自愿补充：`target_sound`、`target_meaning`、`integration`；未选为 `null`。旧记录原值不改写。首次播放后“马上懂了”记 `direct`；重听后这个按钮改为“重听后懂了”，记 `slow`，同时保留 `replay_count`。提示后才改成“懂”会保留原判断，并带 `text_before_judgment` 或 `judgment_corrected` 等标记，不能当独立盲听成功。
+
+点“马上懂了”或“重听后懂了”后，原句、逐句中文和学习点立即显示，`answer_shown` 记为真；点“还没懂”后，逐句中文在整句重读后自动显示，或由用户提前点击显示。旧记录的 `answer_shown` 不回填。
 
 `exposure_flags` 中 `first_unprompted` 描述首次无提示听的条件，不等于“掌握”；`replay_assisted`、`text_before_judgment`、`answer_revealed`、`post_feedback_immediate`、`review_session`、`prior_target_exposure` 等标记会限制后续解释。旧记录缺少新字段时应当视为“未记录／未知”，不能补推断。
 
