@@ -301,6 +301,7 @@ function selectCandidate(followup) {
   if (!id) return null;
   progress.activeAttempt = {
     itemId: item.id, candidateId: id, selectedAt: now(), playCount: 0,
+    feedbackReplayCount: 0, feedbackReplayCompletedCount: 0,
     audioCompleted: false, partialAudio: false, textShown: false,
     supportBefore: currentSupport(item.id), overallStatus: null, difficultyType: null, note: ""
   };
@@ -467,7 +468,6 @@ function chooseRating(value) {
     }
   })) return;
   scheduleAutomaticMeaning();
-  if (status === "not_understood" && session.progress.stage === "spelling" && ["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
 }
 function revealSpelling() {
   const session = activeSession();
@@ -486,7 +486,6 @@ function revealSpelling() {
     session.progress.stage = "spelling";
   })) return;
   scheduleAutomaticMeaning();
-  if (["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
 }
 function setWrittenCheck(value) {
   const session = activeSession();
@@ -535,7 +534,6 @@ function skipCurrent() {
       session.progress.stage = "spelling";
     })) return;
     scheduleAutomaticMeaning();
-    if (["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
   } else {
     if (!commitChange(() => {
       attempt.overallStatus = "skipped";
@@ -549,6 +547,7 @@ function supportForAttempt(attempt) {
   return unique([
     ...attempt.supportBefore,
     ...(attempt.playCount > 1 ? ["replay"] : []),
+    ...(attempt.feedbackReplayCount > 0 ? ["sentence_audio_after_judgment"] : []),
     ...(attempt.textShown ? ["sentence_text"] : []),
     ...(attempt.answerShown ? ["meaning"] : []),
     ...(attempt.targetAudioPlayed ? ["target_audio"] : [])
@@ -571,7 +570,7 @@ function finishAttempt() {
     attempt.supportUsed = supportForAttempt(attempt);
     progress.attempts.push(structuredClone(attempt));
     progress.activeAttempt = null;
-    if (attempt.answerShown) progress.feedbackEvents.push({ itemId: item.id, afterCandidateId: attempt.candidateId, at: now(), supportUsed: unique(["spelling", "meaning", ...(attempt.targetAudioPlayed ? ["target_audio"] : [])]), reason: attempt.difficultyType });
+    if (attempt.answerShown) progress.feedbackEvents.push({ itemId: item.id, afterCandidateId: attempt.candidateId, at: now(), supportUsed: unique(["spelling", "meaning", ...(attempt.feedbackReplayCount > 0 ? ["sentence_audio_after_judgment"] : []), ...(attempt.targetAudioPlayed ? ["target_audio"] : [])]), reason: attempt.difficultyType });
     if (!followup) {
       progress.itemOutcomes[item.id] = { sessionGoalResult: attempt.overallStatus === "skipped" ? "not_observed" : "observed", localExitReason: attempt.overallStatus === "skipped" ? "not_attempted_skip" : "local_observation_recorded", at: now() };
       progress.itemIndex += 1;
@@ -588,24 +587,45 @@ function playNext() {
   if (!progress || progress.paused || !["judged", "answer", "feedback", "continue"].includes(progress.stage)) return;
   const oldCount = progress.attempts.length;
   cancelAutomaticMeaning();
+  interruptAudio();
   finishAttempt();
   const next = activeSession()?.progress;
   if (next?.attempts.length === oldCount + 1 && next.stage === "ready") playSentence();
 }
-function playTarget() {
-  const item = currentItem();
+function replayFeedbackSentence() {
   const session = activeSession();
-  if (!item || !["spelling", "answer", "feedback"].includes(session.progress.stage)) return;
-  speak(item.feedback.spelling, {
-    onend: () => {
-      const attempt = session.progress.activeAttempt;
-      if (attempt) commitChange(() => { attempt.targetAudioPlayed = true; });
-      else {
-        const event = [...session.progress.feedbackEvents].reverse().find(e => e.itemId === item.id);
-        if (event) { event.supportUsed = unique([...event.supportUsed, "target_audio"]); updateProgress(); }
+  const item = currentItem();
+  if (!session || !item || session.progress.paused || !["judged", "correcting", "spelling", "answer", "feedback", "continue"].includes(session.progress.stage)) return;
+  if (!db.voice?.approved || db.voice.key !== $("voiceSelect").value || !selectedVoice()) return;
+  const attempt = session.progress.activeAttempt;
+  const recorded = attempt || [...session.progress.attempts].reverse().find(value => value.itemId === item.id);
+  const candidate = item.candidates.find(value => value.id === recorded?.candidateId);
+  if (!candidate) return;
+  cancelAutomaticMeaning();
+  if (!commitChange(() => {
+    if (attempt) {
+      attempt.feedbackReplayCount = (attempt.feedbackReplayCount || 0) + 1;
+      attempt.feedbackVoicesUsed = unique([...(attempt.feedbackVoicesUsed || []), $("voiceSelect").value]);
+    } else {
+      let event = [...session.progress.feedbackEvents].reverse().find(value => value.itemId === item.id && value.afterCandidateId === candidate.id);
+      if (!event) {
+        event = { itemId: item.id, afterCandidateId: candidate.id, at: now(), supportUsed: [] };
+        session.progress.feedbackEvents.push(event);
       }
+      event.sentenceReplayCount = (event.sentenceReplayCount || 0) + 1;
+      event.supportUsed = unique([...event.supportUsed, "sentence_audio_after_judgment"]);
+    }
+  })) { scheduleAutomaticMeaning(); return; }
+  speak(candidate.text, {
+    onend: () => {
+      if (attempt) commitChange(() => { attempt.feedbackReplayCompletedCount = (attempt.feedbackReplayCompletedCount || 0) + 1; });
+      else {
+        const event = [...session.progress.feedbackEvents].reverse().find(value => value.itemId === item.id && value.afterCandidateId === candidate.id);
+        if (event) commitChange(() => { event.sentenceReplayCompletedCount = (event.sentenceReplayCompletedCount || 0) + 1; });
+      }
+      scheduleAutomaticMeaning();
     },
-    onerror: () => { $("playStatus").textContent = "目标发音未完成，请重试。"; }
+    onerror: () => { $("playStatus").textContent = "整句朗读未完成，请重试。"; scheduleAutomaticMeaning(); }
   });
 }
 function prepareFollowup() {
@@ -656,6 +676,7 @@ function exportSession(session) {
       ...(priorExposure ? ["prior_target_exposure"] : []),
       ...(!operationTestOnly && !reviewAtPlay && !priorExposure && attempt.playCount === 1 && !attempt.partialAudio && !attempt.textShownBeforeJudgment && !attempt.promptedCorrection && !attempt.supportBefore.length && !progress.attempts.slice(0, index).some(a => a.itemId === item.id) ? ["first_unprompted"] : []),
       ...(attempt.playCount > 1 ? ["replay_assisted"] : []),
+      ...(attempt.feedbackReplayCount > 0 ? ["feedback_sentence_replay"] : []),
       ...(attempt.partialAudio ? ["partial_audio_exposure"] : []),
       ...(attempt.textShown ? ["text_revealed"] : []),
       ...(attempt.textShownBeforeJudgment ? ["text_before_judgment"] : []),
@@ -675,7 +696,7 @@ function exportSession(session) {
       item_kind: item.kind, task_type: taskType(item), target: item.target,
       training_focus: item.training_focus, locked_meaning_or_function: item.locked_meaning_or_function,
       user_reported: { understanding: attempt.overallStatus, difficulty: attempt.difficultyType, first_judgment: attempt.firstJudgment || null, written_check: attempt.writtenCheck || "not_checked", note: attempt.note },
-      app_observed: { play_count: attempt.playCount, replay_count: Math.max(0, attempt.playCount - 1), audio_completed: attempt.audioCompleted, partial_audio: attempt.partialAudio, sentence_text_shown: attempt.textShown, text_before_judgment: !!attempt.textShownBeforeJudgment, answer_shown: !!attempt.answerShown, judgment_corrected: !!attempt.judgmentCorrected, corrected_after_prompt: !!attempt.promptedCorrection, skip_reason: attempt.skipReason || null, support_used: attempt.supportUsed, exposure_flags: exposureFlags, voice: attempt.voice, voices_used: attempt.voicesUsed || (attempt.voice ? [attempt.voice] : []), rate: attempt.rate, selected_at: attempt.selectedAt, started_at: attempt.lastPlayAt, judged_at: attempt.judgedAt || null, recorded_at: attempt.recordedAt },
+      app_observed: { play_count: attempt.playCount, replay_count: Math.max(0, attempt.playCount - 1), feedback_sentence_replay_count: attempt.feedbackReplayCount || 0, feedback_sentence_replay_completed_count: attempt.feedbackReplayCompletedCount || 0, audio_completed: attempt.audioCompleted, partial_audio: attempt.partialAudio, sentence_text_shown: attempt.textShown, text_before_judgment: !!attempt.textShownBeforeJudgment, answer_shown: !!attempt.answerShown, judgment_corrected: !!attempt.judgmentCorrected, corrected_after_prompt: !!attempt.promptedCorrection, skip_reason: attempt.skipReason || null, support_used: attempt.supportUsed, exposure_flags: exposureFlags, voice: attempt.voice, voices_used: attempt.voicesUsed || (attempt.voice ? [attempt.voice] : []), feedback_voices_used: attempt.feedbackVoicesUsed || [], rate: attempt.rate, selected_at: attempt.selectedAt, started_at: attempt.lastPlayAt, judged_at: attempt.judgedAt || null, recorded_at: attempt.recordedAt },
       interpretation: interpretedLayers(attempt)
     };
   });
@@ -1026,7 +1047,7 @@ function render() {
   const activeTask = item ? taskType(item) : null;
   const taskLabels = { word: "单词听辨", chunk: "词块听辨", in_sentence_recognition: "句中识别", sentence_understanding: "整句理解" };
   $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} 项 / 共 ${session.pack.items.length} 项 · ${taskLabels[activeTask]}` : "本次结束";
-  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "看正确意思", feedback: "目标词提示", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
+  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "看正确意思", feedback: "看刚才的反馈", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
   $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "准备好就播放下一句。", spelling: "先看英文；意思稍后自动出现。要检查看字认识吗，可展开下方选项。", answer: "准备好就播放下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
@@ -1041,6 +1062,7 @@ function render() {
   $("showText").disabled = stage !== "rating" || !attempt?.audioCompleted;
   $("revealedText").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
   $("ratingPanel").hidden = !["rating", "correcting"].includes(stage) || progress.paused;
+  $("replayCorrectingSentence").hidden = stage !== "correcting" || progress.paused;
   document.querySelectorAll("[data-rating='direct']").forEach(button => { button.textContent = (attempt?.playCount || 0) > 1 ? "重听后懂了" : "马上懂了"; });
   document.querySelectorAll("[data-rating='slow']").forEach(button => { button.hidden = (attempt?.playCount || 0) > 1; });
   $("judgedPanel").hidden = stage !== "judged" || progress.paused;
@@ -1060,7 +1082,7 @@ function render() {
   document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "完成这轮" : "播放下一句"; });
   $("legacyPanel").hidden = !["feedback", "continue"].includes(stage) || progress.paused;
   $("legacyMessage").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "这句已记下，继续听另一句。";
-  $("legacyPlayTarget").hidden = stage !== "feedback";
+  $("legacyReplaySentence").hidden = !["feedback", "continue"].includes(stage);
   $("completePanel").hidden = stage !== "complete";
   $("completeMessage").textContent = storageProblem
     ? "本机保存存在问题。关闭页面前请导出完整备份，并检查文件确实保存。"
@@ -1192,9 +1214,12 @@ function bindEvents() {
     }
   });
   $("revealMeaning").addEventListener("click", revealMeaning);
-  $("playTarget").addEventListener("click", playTarget);
+  $("replayJudgedSentence").addEventListener("click", replayFeedbackSentence);
+  $("replayCorrectingSentence").addEventListener("click", replayFeedbackSentence);
+  $("replaySpellingSentence").addEventListener("click", replayFeedbackSentence);
+  $("replayAnswerSentence").addEventListener("click", replayFeedbackSentence);
   document.querySelectorAll("[data-play-next]").forEach(button => button.addEventListener("click", playNext));
-  $("legacyPlayTarget").addEventListener("click", playTarget);
+  $("legacyReplaySentence").addEventListener("click", replayFeedbackSentence);
   $("legacyContinue").addEventListener("click", prepareFollowup);
   $("pauseSession").addEventListener("click", togglePause);
   $("changeVoice").addEventListener("click", () => {

@@ -17,6 +17,7 @@ function harness(initial = null, query = "") {
   let clipboardFails = false;
   let blob = null;
   let clipboardText = null;
+  const spoken = [];
   let nextTimer = 1;
   const timers = new Map();
   const element = id => {
@@ -38,13 +39,13 @@ function harness(initial = null, query = "") {
     createElement: tag => element(`created-${tag}-${Math.random()}`),
     body: { append() {} }, hidden: false, addEventListener() {}
   };
-  const synth = { getVoices: () => [{ name: "Local English", lang: "en-US", localService: true }], cancel() {}, speak() {} };
+  const synth = { getVoices: () => [{ name: "Local English", lang: "en-US", localService: true }], cancel() {}, speak(utterance) { spoken.push(utterance); } };
   const window = { speechSynthesis: synth, confirm: () => true, addEventListener() {}, location: { search: query } };
   const navigator = { clipboard: { async writeText(value) { if (clipboardFails) throw new Error("denied"); clipboardText = value; } } };
   const context = vm.createContext({
     console, document, window, navigator, localStorage: storage, crypto, structuredClone, Blob, atob, TextEncoder, TextDecoder,
     URL: { createObjectURL(value) { blob = value; return "blob:test"; }, revokeObjectURL() {} },
-    SpeechSynthesisUtterance: class {},
+    SpeechSynthesisUtterance: class { constructor(value) { this.text = value; } },
     setTimeout(fn) { const id = nextTimer++; timers.set(id, fn); return id; },
     clearTimeout(id) { timers.delete(id); },
     pack
@@ -58,7 +59,9 @@ function harness(initial = null, query = "") {
     file: data => ({ size: JSON.stringify(data).length, text: async () => JSON.stringify(data) }),
     copied: () => clipboardText,
     runTimers: () => { for (const [id, fn] of [...timers]) { timers.delete(id); fn(); } },
-    setClipboardFailure: value => { clipboardFails = value; }
+    setClipboardFailure: value => { clipboardFails = value; },
+    spokenTexts: () => spoken.map(utterance => utterance.text),
+    finishSpeech: () => spoken.at(-1)?.onend?.()
   };
 }
 
@@ -338,6 +341,34 @@ async function run() {
   assert.equal(replayed.eval("activeSession().progress.activeAttempt.overallStatus"), "slow", "replay maps understood to delayed understanding");
   replayed.eval("finishAttempt(); exportJson(false)");
   assert.ok((await replayed.lastDownload()).sessions[0].attempts[0].app_observed.exposure_flags.includes("replay_assisted"));
+
+  const wholeSentence = harness();
+  wholeSentence.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('not_understood')");
+  assert.deepEqual(wholeSentence.spokenTexts(), [], "failure must not auto-play isolated target audio");
+  const heardSentence = wholeSentence.eval("currentCandidate().text");
+  wholeSentence.eval("replayFeedbackSentence()");
+  assert.equal(wholeSentence.spokenTexts().at(-1), heardSentence, "feedback replays the full sentence");
+  wholeSentence.finishSpeech();
+  wholeSentence.eval("revealMeaning(); replayFeedbackSentence()");
+  assert.equal(wholeSentence.spokenTexts().at(-1), heardSentence);
+  wholeSentence.finishSpeech();
+  wholeSentence.eval("finishAttempt(); exportJson(false)");
+  const wholeRecord = (await wholeSentence.lastDownload()).sessions[0].attempts[0];
+  assert.equal(wholeRecord.app_observed.play_count, 1, "feedback playback must not change blind listening count");
+  assert.equal(wholeRecord.app_observed.feedback_sentence_replay_count, 2);
+  assert.equal(wholeRecord.app_observed.feedback_sentence_replay_completed_count, 2);
+  assert.ok(wholeRecord.app_observed.support_used.includes("sentence_audio_after_judgment"));
+  assert.ok(!wholeRecord.app_observed.support_used.includes("target_audio"));
+
+  const judgedReplay = harness();
+  judgedReplay.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct'); replayFeedbackSentence()");
+  assert.equal(judgedReplay.spokenTexts().at(-1), judgedReplay.eval("currentCandidate().text"));
+  judgedReplay.finishSpeech();
+  judgedReplay.eval("finishAttempt(); exportJson(false)");
+  const judgedRecord = (await judgedReplay.lastDownload()).sessions[0].attempts[0];
+  assert.equal(judgedRecord.user_reported.understanding, "direct");
+  assert.equal(judgedRecord.app_observed.play_count, 1);
+  assert.equal(judgedRecord.app_observed.feedback_sentence_replay_count, 1);
 
   const unknown = harness();
   unknown.eval("setActivePack(pack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; revealSpelling()");

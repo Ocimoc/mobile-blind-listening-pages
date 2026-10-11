@@ -68,7 +68,7 @@
       <p id="instruction" class="muted">先听。听完只点一次，按刚才的真实情况选。</p>
       <div class="play-row">
         <button id="playSentence" type="button" class="play-button">播放这一句</button>
-        <button id="replaySentence" type="button" class="button secondary" disabled>重播</button>
+        <button id="replaySentence" type="button" class="button secondary" disabled>重听整句</button>
         <button id="stopAudio" type="button" class="button ghost">停止声音</button>
       </div>
       <p id="playStatus" class="status" role="status"></p>
@@ -81,6 +81,7 @@
           <button type="button" class="choice" data-rating="slow">后来才懂</button>
           <button type="button" class="choice" data-rating="not_understood">还没懂</button>
         </div>
+        <button id="replayCorrectingSentence" type="button" class="button secondary" hidden>再听整句</button>
         <button id="showText" type="button" class="text-link answer-entry">先看英文（会记为没懂）</button>
         <details class="optional-note">
           <summary>补充一句备注（可选）</summary>
@@ -93,6 +94,7 @@
         <p id="judgedSummary" class="panel-title">判断已记下</p>
         <div class="button-row">
           <button type="button" class="button primary" data-play-next>播放下一句</button>
+          <button id="replayJudgedSentence" type="button" class="button secondary">再听整句</button>
           <button id="revealAfterJudgment" type="button" class="button secondary">核对刚才这句</button>
           <button type="button" class="button ghost" data-correct>改刚才的判断</button>
         </div>
@@ -117,6 +119,7 @@
           </div>
         </details>
         <div class="button-row">
+          <button id="replaySpellingSentence" type="button" class="button secondary">再听整句</button>
           <button id="revealMeaning" type="button" class="button secondary">现在看意思</button>
           <button type="button" class="button ghost" data-correct>改刚才的判断</button>
         </div>
@@ -128,7 +131,7 @@
         <p id="targetFeedback"></p>
         <p id="extraFeedback" class="muted" hidden></p>
         <div class="button-row">
-          <button id="playTarget" type="button" class="button secondary">再听目标发音</button>
+          <button id="replayAnswerSentence" type="button" class="button secondary">再听整句</button>
           <button type="button" class="button primary" data-play-next>播放下一句</button>
           <button type="button" class="button ghost" data-correct>改刚才的判断</button>
         </div>
@@ -138,7 +141,7 @@
         <p class="panel-title">继续旧轮次</p>
         <p id="legacyMessage" class="muted"></p>
         <div class="button-row">
-          <button id="legacyPlayTarget" type="button" class="button secondary">听目标发音</button>
+          <button id="legacyReplaySentence" type="button" class="button secondary">再听整句</button>
           <button id="legacyContinue" type="button" class="button primary">继续听新句</button>
         </div>
       </div>
@@ -209,6 +212,6 @@
       </section>
     </div>
   </main>
-  <script src="app.js?v=20261011-4" defer></script>
+  <script src="app.js?v=20261011-5" defer></script>
 </body>
 </html>

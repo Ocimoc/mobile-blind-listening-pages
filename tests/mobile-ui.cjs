@@ -20,8 +20,9 @@ async function run() {
     });
     await context.addInitScript(() => {
       const voice = { name: "Local English", lang: "en-US", localService: true };
+      window.__spoken = [];
       Object.defineProperty(window, "speechSynthesis", { configurable: true, value: {
-        getVoices: () => [voice], cancel() {}, speak(utterance) { setTimeout(() => utterance.onend?.(), 20); }
+        getVoices: () => [voice], cancel() {}, speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => utterance.onend?.(), 20); }
       } });
       window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
     });
@@ -62,12 +63,20 @@ async function run() {
     assert.equal(await page.locator("#spellingPanel").isVisible(), true);
     assert.equal(await page.locator("#answerPanel").isVisible(), false);
     assert.match(await page.locator("#revealedText").innerText(), /Please turn on the light/);
+    assert.deepEqual(await page.evaluate(() => window.__spoken), ["Hello. Please listen to this voice.", "Please turn on the light."],
+      "failure must not automatically play isolated target audio");
+    await page.locator("#replaySpellingSentence").click();
+    await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 1);
+    assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
     if (process.env.BLP_FEEDBACK_SCREENSHOT) await page.screenshot({ path: process.env.BLP_FEEDBACK_SCREENSHOT, fullPage: true });
     await page.locator("#optionalDiagnosis summary").click();
     await page.locator('[data-written="recognized"]').click();
     await page.locator('[data-reason="target_sound"]').click();
     await page.locator("#revealMeaning").click();
     assert.equal(await page.locator("#answerPanel").isVisible(), true);
+    await page.locator("#replayAnswerSentence").click();
+    await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 2);
+    assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
     await page.locator("#answerPanel [data-correct]").click();
     await page.locator('[data-rating="slow"]').click();
     await page.locator("#answerPanel [data-play-next]").click();
