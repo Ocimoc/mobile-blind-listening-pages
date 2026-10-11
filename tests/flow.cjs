@@ -146,7 +146,7 @@ async function run() {
 
   const nextPlay = harness();
   nextPlay.context.twoItemPack = twoItemPack;
-  nextPlay.eval("setActivePack(twoItemPack); selectCandidate(false); db.voice = { key: document.getElementById('voiceSelect').value, approved: true }; saveStore(); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct'); playNext()");
+  nextPlay.eval("setActivePack(twoItemPack); selectCandidate(false); db.voice = { key: document.getElementById('voiceSelect').value, approved: true }; saveStore(); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct'); revealMeaning(); playNext()");
   assert.equal(nextPlay.eval("activeSession().progress.attempts.length"), 1, "one judgment becomes one record");
   assert.equal(nextPlay.eval("activeSession().progress.itemIndex"), 1);
   assert.equal(nextPlay.eval("activeSession().progress.stage"), "playing", "next button starts next sentence directly");
@@ -317,7 +317,8 @@ async function run() {
   const oneClick = harness();
   oneClick.eval("setActivePack(pack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'");
   oneClick.eval("chooseRating('direct')");
-  assert.equal(oneClick.eval("activeSession().progress.stage"), "judged", "one tap saves judgment without a second save button");
+  assert.equal(oneClick.eval("activeSession().progress.stage"), "spelling", "one tap shows the original sentence");
+  assert.equal(oneClick.eval("activeSession().progress.activeAttempt.textShown"), true);
   const afterJudgment = harness(JSON.parse(oneClick.saved.get(KEY)));
   assert.equal(afterJudgment.eval("activeSession().progress.activeAttempt.overallStatus"), "direct", "unfinished judged item survives refresh");
   const judgedBackupSource = harness(JSON.parse(oneClick.saved.get(KEY)));
@@ -326,7 +327,7 @@ async function run() {
   const judgedRestored = harness();
   judgedRestored.context.judgedBackupFile = judgedRestored.file(judgedBackup);
   await judgedRestored.eval("importBackup(judgedBackupFile)");
-  assert.equal(judgedRestored.eval("activeSession().progress.stage"), "judged", "full backup preserves a one-tap saved judgment");
+  assert.equal(judgedRestored.eval("activeSession().progress.stage"), "spelling", "full backup preserves a one-tap saved judgment");
   afterJudgment.eval("startCorrection(); chooseRating('slow'); finishAttempt()");
   assert.equal(afterJudgment.eval("activeSession().progress.attempts.length"), 1, "correction does not duplicate the record");
   assert.equal(afterJudgment.eval("activeSession().progress.attempts[0].firstJudgment.understanding"), "direct");
@@ -344,10 +345,8 @@ async function run() {
 
   const wholeSentence = harness();
   wholeSentence.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('not_understood')");
-  assert.deepEqual(wholeSentence.spokenTexts(), [], "failure must not auto-play isolated target audio");
   const heardSentence = wholeSentence.eval("currentCandidate().text");
-  wholeSentence.eval("replayFeedbackSentence()");
-  assert.equal(wholeSentence.spokenTexts().at(-1), heardSentence, "feedback replays the full sentence");
+  assert.deepEqual(wholeSentence.spokenTexts(), [heardSentence], "failure immediately replays the full sentence");
   wholeSentence.finishSpeech();
   wholeSentence.eval("revealMeaning(); replayFeedbackSentence()");
   assert.equal(wholeSentence.spokenTexts().at(-1), heardSentence);
@@ -361,14 +360,22 @@ async function run() {
   assert.ok(!wholeRecord.app_observed.support_used.includes("target_audio"));
 
   const judgedReplay = harness();
-  judgedReplay.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct'); replayFeedbackSentence()");
+  judgedReplay.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; chooseRating('direct')");
   assert.equal(judgedReplay.spokenTexts().at(-1), judgedReplay.eval("currentCandidate().text"));
+  assert.equal(judgedReplay.eval("activeSession().progress.stage"), "spelling");
+  assert.equal(judgedReplay.eval("activeSession().progress.activeAttempt.answerShown"), undefined, "understood meaning waits for learner tap");
   judgedReplay.finishSpeech();
   judgedReplay.eval("finishAttempt(); exportJson(false)");
   const judgedRecord = (await judgedReplay.lastDownload()).sessions[0].attempts[0];
   assert.equal(judgedRecord.user_reported.understanding, "direct");
   assert.equal(judgedRecord.app_observed.play_count, 1);
   assert.equal(judgedRecord.app_observed.feedback_sentence_replay_count, 1);
+
+  const resumedVoice = harness();
+  resumedVoice.eval("setActivePack(pack); db.voice = {key: 'Local English|en-US', approved: true}; saveStore(); window.speechSynthesis.getVoices = () => [{name: 'Other English', lang: 'en-US', localService: true}, {name: 'Local English', lang: 'en-US', localService: true}]; refreshVoices(); startNewSession()");
+  assert.equal(resumedVoice.element("voiceSelect").value, "Local English|en-US", "voice order changes must preserve approved selection");
+  assert.equal(resumedVoice.element("trainerCard").hidden, false, "new round opens training with the approved voice");
+  assert.equal(resumedVoice.element("voiceCard").hidden, true);
 
   const unknown = harness();
   unknown.eval("setActivePack(pack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.stage = 'rating'; revealSpelling()");

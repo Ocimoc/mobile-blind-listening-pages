@@ -55,6 +55,10 @@
     </section>
 
     <section class="card trainer" id="trainerCard" hidden>
+      <div class="training-progress">
+        <p id="packProgressTitle" class="muted"></p>
+        <progress id="packProgress" value="0" max="1" aria-label="本包已完成的训练目标"></progress>
+      </div>
       <div class="section-head">
         <div>
           <p class="eyebrow" id="progressLabel">第 1 项</p>
@@ -101,6 +105,7 @@
       </div>
 
       <div id="spellingPanel" class="panel" hidden>
+        <p class="panel-title">刚才这句</p>
         <p id="revealedText" class="revealed"></p>
         <details id="optionalDiagnosis" class="optional-note">
           <summary>补充卡点（可选）</summary>
@@ -120,7 +125,7 @@
         </details>
         <div class="button-row">
           <button id="replaySpellingSentence" type="button" class="button secondary">再听整句</button>
-          <button id="revealMeaning" type="button" class="button secondary">现在看意思</button>
+          <button id="revealMeaning" type="button" class="button primary">看这句的意思</button>
           <button type="button" class="button ghost" data-correct>改刚才的判断</button>
         </div>
       </div>
@@ -161,26 +166,26 @@
         <p class="muted">在这里收新材料、把练习记录交回 Work。完整备份在“更多”。</p>
       </div>
       <p id="dataStatus" class="status" role="status"></p>
-      <label class="field-label" for="sessionSelect">当前训练轮次（中途回来可继续）</label>
+      <label class="field-label" for="sessionSelect">选择训练记录（中途回来可继续）</label>
       <select id="sessionSelect" aria-label="选择训练轮次"></select>
       <div class="data-group">
-        <h3>粘贴新训练包</h3>
+        <h3>导入新训练包</h3>
         <div class="paste-import">
-          <label class="field-label" for="packPaste">粘贴完整 JSON 或以 BLP1: 开头的传输码</label>
+          <label class="button primary file-button">从手机“文件”选择训练包 JSON<input id="importPack" type="file" accept=".json,application/json"></label>
+          <label class="field-label" for="packPaste">也可粘贴完整 JSON 或以 BLP1: 开头的传输码</label>
           <textarea id="packPaste" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里粘贴训练包"></textarea>
           <div class="button-row">
-            <button id="importPastedPack" type="button" class="button primary">导入训练包</button>
-            <label class="button ghost file-button">或从手机“文件”选 JSON<input id="importPack" type="file" accept=".json,application/json" hidden></label>
+            <button id="importPastedPack" type="button" class="button secondary">导入粘贴内容</button>
           </div>
           <p id="importStatus" class="import-status" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
       <div class="data-group">
-          <h3>复制未回传记录</h3>
-          <p class="muted">复制完整记录，发给电脑上的 Work；内容太长时改用 JSON 文件。复制和下载都不会标记为已回传。</p>
+          <h3>交回练习记录</h3>
+          <p class="muted">先下载 JSON 到手机“文件”，确认保存后经豆包传到电脑，再交给 Work。也可复制完整记录。下载或复制都不会标记为已回传。</p>
         <div class="button-row">
-            <button id="copyRecords" type="button" class="button primary">复制未回传记录</button>
-            <button id="exportJson" type="button" class="button secondary">下载 JSON 文件</button>
+            <button id="exportJson" type="button" class="button primary">下载未回传记录 JSON</button>
+            <button id="copyRecords" type="button" class="button secondary">复制未回传记录</button>
         </div>
           <details id="manualCopy" hidden>
             <summary>复制按钮不可用时，展开手动复制</summary>

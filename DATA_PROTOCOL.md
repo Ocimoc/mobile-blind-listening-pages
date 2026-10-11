@@ -26,14 +26,14 @@
 | `user_reported.first_judgment` | 第一次主动判断及时间；旧记录为 `null`，不补猜。 |
 | `user_reported.written_check` | `recognized`、`not_recognized` 或 `not_checked`；未检查不等于看字不认识。 |
 | `app_observed.text_before_judgment`, `answer_shown`, `judgment_corrected`, `skip_reason` | 提示、答案、纠正和跳过的实际过程。 |
-| `app_observed.feedback_sentence_replay_count`, `feedback_sentence_replay_completed_count`, `feedback_voices_used` | 判断之后主动重听整句的开始次数、完成次数和所用声音；与盲听阶段的 `play_count`／`replay_count` 分开。旧记录缺少时保持未知。 |
+| `app_observed.feedback_sentence_replay_count`, `feedback_sentence_replay_completed_count`, `feedback_voices_used` | 判断之后整句重读的开始次数、完成次数和所用声音，包含判断后自动重读与手动点“再听整句”；与盲听阶段的 `play_count`／`replay_count` 分开。旧记录缺少时保持未知。 |
 | `app_observed.selected_at`, `judged_at`, `recorded_at` | 选中材料、判断和完成记录的时间。 |
 
 `understanding` 在新记录中为 `direct`、`slow`、`not_understood` 或 `skipped`。主界面只让用户选择“马上懂了／后来才懂／还没懂”。没懂的具体原因可在英文反馈中自愿补充：`target_sound`、`target_meaning`、`integration`；未选为 `null`。旧记录原值不改写。首次播放后“马上懂了”记 `direct`；重听后这个按钮改为“重听后懂了”，记 `slow`，同时保留 `replay_count`。提示后才改成“懂”会保留原判断，并带 `text_before_judgment` 或 `judgment_corrected` 等标记，不能当独立盲听成功。
 
 `exposure_flags` 中 `first_unprompted` 描述首次无提示听的条件，不等于“掌握”；`replay_assisted`、`text_before_judgment`、`answer_revealed`、`post_feedback_immediate`、`review_session`、`prior_target_exposure` 等标记会限制后续解释。旧记录缺少新字段时应当视为“未记录／未知”，不能补推断。
 
-新版反馈按钮与失败后重听均播放**原完整句子**，不会自动或单独朗读目标词。判断后的重听另记 `sentence_audio_after_judgment` 与 `feedback_sentence_replay`；不改变首次判断和盲听重播次数。旧记录中已经存在的 `target_audio` 原样保留，不能改写成整句重听。
+新版在三种判断后自动重读**原完整句子**一次；“再听整句”按钮也播放原句。不会自动或单独朗读目标词。判断后的重读另记 `sentence_audio_after_judgment` 与 `feedback_sentence_replay`；不改变首次判断和盲听重播次数。旧记录中已经存在的 `target_audio` 原样保留，不能改写成整句重听。
 
 ## 复制、确认与备份
 

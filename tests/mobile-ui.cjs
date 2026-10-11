@@ -10,8 +10,10 @@ const types = { "/": "text/html", "/index.html": "text/html", "/app.js": "text/j
 async function run() {
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" });
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ["clipboard-read", "clipboard-write"] });
+    const downloadsPath = path.join(root, "..", "browser-downloads");
+    fs.mkdirSync(downloadsPath, { recursive: true });
+    browser = await chromium.launch({ headless: true, executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", downloadsPath });
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true, permissions: ["clipboard-read", "clipboard-write"] });
     await context.route("https://blp.test/**", route => {
       const name = new URL(route.request().url()).pathname;
       if (!types[name]) return route.fulfill({ status: 404, body: "" });
@@ -37,7 +39,7 @@ async function run() {
       await page.locator("#packPaste").fill(longCode);
       await page.locator("#importPastedPack").click();
       assert.equal(await page.locator("#trainView").isVisible(), true);
-      assert.match(await page.locator("#homeSummary").innerText(), /INTERVIEW-LISTEN-DAY1-20261011-01/);
+      assert.match(await page.locator("#homeSummary").innerText(), /第 1 天 · 第 1 包/);
       assert.equal(await page.locator("#trainNotice").isVisible(), true);
       await page.evaluate(() => localStorage.clear());
       await page.reload();
@@ -47,13 +49,17 @@ async function run() {
     await page.locator("#importPastedPack").click();
     assert.equal(await page.locator("#importStatus").isVisible(), true);
     assert.match(await page.locator("#importStatus").innerText(), /导入失败/);
-    await page.locator("#packPaste").fill(JSON.stringify(pack));
-    await page.locator("#importPastedPack").click();
+    await page.locator("#importPack").setInputFiles({ name: "training-pack.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(pack)) });
+    await page.locator("#trainView").waitFor({ state: "visible" });
     assert.equal(await page.locator("#trainView").isVisible(), true);
     assert.equal(await page.locator("#trainNotice").isVisible(), true);
     await page.locator("#previewVoice").click();
     await page.locator("#approveVoice").click();
     assert.equal(await page.locator("#trainerCard").isVisible(), true);
+    await page.reload();
+    assert.equal(await page.locator("#trainerCard").isVisible(), true, "confirmed voice survives reload without another sample");
+    assert.equal(await page.locator("#voiceCard").isVisible(), false);
+    assert.match(await page.locator("#progressLabel").innerText(), /本包第 1 \/ 1 项/);
     await page.locator("#playSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     if (process.env.BLP_SCREENSHOT) await page.screenshot({ path: process.env.BLP_SCREENSHOT, fullPage: true });
@@ -63,10 +69,11 @@ async function run() {
     assert.equal(await page.locator("#spellingPanel").isVisible(), true);
     assert.equal(await page.locator("#answerPanel").isVisible(), false);
     assert.match(await page.locator("#revealedText").innerText(), /Please turn on the light/);
-    assert.deepEqual(await page.evaluate(() => window.__spoken), ["Hello. Please listen to this voice.", "Please turn on the light."],
-      "failure must not automatically play isolated target audio");
-    await page.locator("#replaySpellingSentence").click();
+    assert.deepEqual(await page.evaluate(() => window.__spoken), ["Please turn on the light.", "Please turn on the light."],
+      "failure immediately replays the full sentence");
     await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 1);
+    await page.locator("#replaySpellingSentence").click();
+    await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 2);
     assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
     if (process.env.BLP_FEEDBACK_SCREENSHOT) await page.screenshot({ path: process.env.BLP_FEEDBACK_SCREENSHOT, fullPage: true });
     await page.locator("#optionalDiagnosis summary").click();
@@ -75,7 +82,7 @@ async function run() {
     await page.locator("#revealMeaning").click();
     assert.equal(await page.locator("#answerPanel").isVisible(), true);
     await page.locator("#replayAnswerSentence").click();
-    await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 2);
+    await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 3);
     assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
     await page.locator("#answerPanel [data-correct]").click();
     await page.locator('[data-rating="slow"]').click();
@@ -84,6 +91,14 @@ async function run() {
     await page.locator("#goRecords").click();
     assert.equal(await page.locator("#materialsView").isVisible(), true);
     if (process.env.BLP_MATERIALS_SCREENSHOT) await page.screenshot({ path: process.env.BLP_MATERIALS_SCREENSHOT, fullPage: true });
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.locator("#exportJson").click()
+    ]);
+    assert.equal(await download.failure(), null);
+    assert.match(download.suggestedFilename(), /\.json$/);
+    assert.equal(JSON.parse(fs.readFileSync(await download.path(), "utf8")).record_count, 1);
+    assert.equal(await page.evaluate(() => db.acknowledgedRecordIds.length), 0, "downloading is not handoff confirmation");
     await page.locator("#copyRecords").click();
     await page.waitForFunction(() => /已复制完整|复制失败/.test(document.getElementById("dataStatus").textContent));
     assert.match(await page.locator("#dataStatus").innerText(), /已复制完整/);
@@ -92,6 +107,7 @@ async function run() {
     assert.equal(report.record_count, 1);
     assert.equal(report.sessions[0].attempts[0].user_reported.first_judgment.understanding, "not_understood");
     assert.equal(report.sessions[0].attempts[0].user_reported.understanding, "slow");
+    assert.equal(report.sessions[0].attempts[0].app_observed.feedback_sentence_replay_count, 3);
     await page.locator("#confirmPaste").fill(copied);
     page.once("dialog", dialog => dialog.accept());
     await page.locator("#confirmPasted").click();
@@ -109,28 +125,33 @@ async function run() {
     await page.locator("#playSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     await page.locator('[data-rating="direct"]').click();
-    assert.equal(await page.locator("#judgedPanel").isVisible(), true);
+    assert.equal(await page.locator("#spellingPanel").isVisible(), true);
+    assert.equal(await page.locator("#answerPanel").isVisible(), false);
     await page.reload();
-    assert.equal(await page.locator("#judgedPanel").isVisible(), true, "demo judgement survives refresh");
-    await page.locator("#judgedPanel [data-play-next]").click();
+    assert.equal(await page.locator("#spellingPanel").isVisible(), true, "demo judgement survives refresh");
+    await page.locator("#revealMeaning").click();
+    await page.locator("#answerPanel [data-play-next]").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    assert.match(await page.locator("#progressLabel").innerText(), /第 2 项/);
+    assert.match(await page.locator("#progressLabel").innerText(), /第 2 \/ 5 项/);
     await page.locator('[data-rating="not_understood"]').click();
     assert.equal(await page.locator("#spellingPanel").isVisible(), true);
     await page.locator("#answerPanel").waitFor({ state: "visible", timeout: 6000 });
     await page.locator("#answerPanel [data-play-next]").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    assert.match(await page.locator("#progressLabel").innerText(), /第 3 项/);
+    assert.match(await page.locator("#progressLabel").innerText(), /第 3 \/ 5 项/);
     await page.locator("#replaySentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     assert.equal(await page.locator('[data-rating="direct"]').innerText(), "重听后懂了");
     assert.equal(await page.locator('[data-rating="slow"]').isVisible(), false);
     await page.locator('[data-rating="direct"]').click();
     assert.equal(await page.evaluate(() => activeSession().progress.activeAttempt.overallStatus), "slow");
+    assert.equal(await page.locator("#spellingPanel").isVisible(), true);
     const priorDemoSession = await page.evaluate(() => activeSession().sessionId);
     await page.locator("#restartDemo").click();
     assert.notEqual(await page.evaluate(() => activeSession().sessionId), priorDemoSession);
     assert.equal(await page.evaluate(() => activeSession().progress.itemIndex), 0);
+    assert.equal(await page.locator("#trainerCard").isVisible(), true, "new round reuses the confirmed voice");
+    assert.equal(await page.locator("#voiceCard").isVisible(), false);
     await page.goto("https://blp.test/index.html");
     assert.equal(await page.locator("#demoBanner").isVisible(), false);
     assert.equal(await page.evaluate(() => localStorage.getItem("english-blind-listening-v1")), normalStore);
