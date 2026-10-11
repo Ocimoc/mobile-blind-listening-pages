@@ -1,6 +1,7 @@
 "use strict";
 
-const STORE_KEY = "english-blind-listening-v1";
+const DEMO_MODE = /(?:\?|&)demo=1(?:&|$)/.test(window.location?.search || "");
+const STORE_KEY = DEMO_MODE ? "english-blind-listening-demo-v1" : "english-blind-listening-v1";
 const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
 const MAX_PACK_BYTES = 2 * 1024 * 1024;
 const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -14,10 +15,29 @@ let db = loadStore();
 let voices = [];
 let allowRemoteVoice = false;
 let spokenToken = 0;
-let selectedReason = null;
+let currentView = "train";
+let feedbackTimer = null;
+const COPY_LIMIT = 60000;
+const DEMO_PACK = {
+  schema_version: 1, pack_id: "DEMO-INTERACTION-20261011", evidence_scope: "operation_test_only",
+  items: [
+    ["lamp", "Word", "The lamp is on.", "台灯"],
+    ["turn on", "Chunk", "Please turn on the fan.", "打开；开启"],
+    ["borrow", "Word", "Can I borrow this book?", "借入"],
+    ["in front of", "Chunk", "The box is in front of the door.", "在……前面"],
+    ["arrive", "Word", "We will arrive at noon.", "到达"]
+  ].map(([target, kind, sentence, meaning], index) => ({
+    id: `DEMO-ITEM-${index + 1}`, kind, target, locked_meaning_or_function: meaning,
+    training_focus: "演示手机交互", session_goal: "试用页面按钮", use_anchor: "虚构日常句",
+    anchor_id: `DEMO-ANCHOR-${index + 1}`, max_observations: 1,
+    feedback: { spelling: target, meaning },
+    candidates: [{ id: `DEMO-SENTENCE-${index + 1}`, text: sentence, content_role: "initial",
+      variation_dimensions: [], anchor_id: `DEMO-ANCHOR-${index + 1}`, work_reviewed: true }]
+  }))
+};
 
 function now() { return new Date().toISOString(); }
-function emptyStore() { return { version: 2, activeSessionId: null, sessions: {}, seenCandidateIds: [], acknowledgedRecordIds: [], pendingExports: {}, voice: null }; }
+function emptyStore() { return { version: 2, activeSessionId: null, sessions: {}, seenCandidateIds: [], acknowledgedRecordIds: [], pendingExports: {}, voice: null, allowRemoteVoice: false }; }
 function newId() {
   if (crypto.randomUUID) return crypto.randomUUID();
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -42,13 +62,15 @@ function migrateStore(state) {
     sessions[sessionId] = session;
   }
   return { version: 2, activeSessionId: state.activePackId === null ? null : `legacy-session-${encodeURIComponent(state.activePackId)}`,
-    sessions, seenCandidateIds: state.seenCandidateIds, acknowledgedRecordIds: [], pendingExports: {}, voice: state.voice || null };
+    sessions, seenCandidateIds: state.seenCandidateIds, acknowledgedRecordIds: [], pendingExports: {}, voice: state.voice || null, allowRemoteVoice: false };
 }
 function loadStore() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return emptyStore();
-    return validateBackupState(migrateStore(JSON.parse(raw)));
+    const state = validateBackupState(migrateStore(JSON.parse(raw)));
+    if (state.allowRemoteVoice === undefined) state.allowRemoteVoice = false;
+    return state;
   } catch (_) {
     storageReadBlocked = true;
     storageProblem = "本机旧记录无法安全读取。网页已停止写入，避免覆盖原数据；请先导出原始数据或联系处理。";
@@ -73,6 +95,30 @@ function saveStore() {
     showStorageProblem();
     return false;
   }
+}
+function commitChange(change) {
+  const previous = structuredClone(db);
+  change();
+  const session = activeSession();
+  if (session) session.progress.updatedAt = now();
+  if (!saveStore()) { db = previous; render(); return false; }
+  render();
+  return true;
+}
+function switchView(view) {
+  if (!["train", "materials", "more"].includes(view)) return;
+  cancelAutomaticMeaning();
+  if (view !== "train" && currentView === "train") interruptAudio();
+  currentView = view;
+  for (const name of ["train", "materials", "more"]) {
+    $(`${name}View`).hidden = name !== view;
+  }
+  document.querySelectorAll("[data-view]").forEach(button => {
+    button.classList.toggle("active", button.dataset.view === view);
+    button.setAttribute("aria-current", button.dataset.view === view ? "page" : "false");
+  });
+  window.scrollTo?.(0, 0);
+  scheduleAutomaticMeaning();
 }
 function activeSession() { return db.sessions[db.activeSessionId] || null; }
 function currentItem() {
@@ -120,6 +166,8 @@ function validatePack(pack) {
     if (!["Word", "Chunk", "Frame"].includes(item.kind) || itemIds.has(item.id) || UNSAFE_KEYS.has(item.id)) throw new Error("item 类型或编号无效。");
     if (!Array.isArray(item.candidates) || item.candidates.length < 1 || item.candidates.length > 100) throw new Error("item 候选句数量无效。");
     if (!item.feedback || typeof item.feedback.spelling !== "string" || typeof item.feedback.meaning !== "string") throw new Error("item 缺少必要反馈材料。");
+    if (item.feedback.details !== undefined && typeof item.feedback.details !== "string") throw new Error("反馈说明格式无效。");
+    if (item.task_type !== undefined && !["word", "chunk", "in_sentence_recognition", "sentence_understanding"].includes(item.task_type)) throw new Error("训练任务类型无效。");
     if (!Number.isInteger(item.max_observations) || item.max_observations < 1 || item.max_observations > 3) throw new Error("局部观察上限无效。");
     itemIds.add(item.id);
   }
@@ -188,6 +236,10 @@ function setActivePack(pack) {
   if (existing.some(session => JSON.stringify(session.pack) !== JSON.stringify(pack))) {
     throw new Error("这个训练包编号已有不同内容。请让 Work 为修订包使用新编号，避免混淆旧记录。");
   }
+  const oldCandidates = new Map(Object.values(db.sessions).flatMap(session => session.pack.items.flatMap(item => item.candidates.map(candidate => [candidate.id, candidate.text]))));
+  if (pack.items.some(item => item.candidates.some(candidate => oldCandidates.has(candidate.id) && oldCandidates.get(candidate.id) !== candidate.text))) {
+    throw new Error("候选句编号已被其他内容使用。请让 Work 为新句换编号；旧记录没有改变。");
+  }
   const previous = structuredClone(db);
   const session = existing.at(-1) || makeSession(pack);
   db.sessions[session.sessionId] = session;
@@ -197,6 +249,7 @@ function setActivePack(pack) {
     throw new Error("本机保存失败，训练包未载入；旧记录没有被覆盖。请查看页面上的存储错误。");
   }
   render();
+  switchView("train");
 }
 function startNewSession() {
   const current = activeSession();
@@ -213,17 +266,20 @@ function startNewSession() {
   }
   render();
   $("dataStatus").textContent = `已开始独立的新一轮（${session.mode === "review" ? "复习" : "尚无既往听力记录"}）。旧轮次及记录仍保留。`;
+  switchView("train");
 }
 function updateProgress() {
   const session = activeSession();
   if (session) session.progress.updatedAt = now();
-  saveStore();
+  const saved = saveStore();
   render();
+  return saved;
 }
 function selectCandidate(followup) {
   const session = activeSession();
   const item = currentItem();
   if (!session || !item) return null;
+  const previous = structuredClone(db);
   const progress = session.progress;
   if (hasPriorExposure(item, session.sessionId)) {
     session.priorTargetByItem ||= {};
@@ -246,7 +302,7 @@ function selectCandidate(followup) {
     supportBefore: currentSupport(item.id), overallStatus: null, difficultyType: null, note: ""
   };
   progress.stage = "ready";
-  updateProgress();
+  if (!updateProgress()) { db = previous; render(); return null; }
   return item.candidates.find(c => c.id === id);
 }
 function currentSupport(itemId) {
@@ -321,9 +377,10 @@ function interruptAudio() {
 }
 function playSentence() {
   const session = activeSession();
-  if (!session || session.progress.paused || session.progress.stage === "complete") return;
+  if (!session || session.progress.paused || !["ready", "rating"].includes(session.progress.stage)) return;
   if (!db.voice?.approved || db.voice.key !== $("voiceSelect").value) return;
-  if (!session.progress.activeAttempt && !selectCandidate(false)) { blockCurrentItem("no_unseen_candidate"); return; }
+  if (!session.progress.activeAttempt && !selectCandidate(false)) { if (!storageProblem) blockCurrentItem("no_unseen_candidate"); return; }
+  const beforePlay = structuredClone(db);
   const attempt = session.progress.activeAttempt;
   const candidate = currentCandidate();
   if (!candidate || !targetPresent(currentItem(), candidate.text) || candidate.anchor_id !== currentItem().anchor_id) {
@@ -346,7 +403,7 @@ function playSentence() {
   attempt.audioCompleted = false;
   session.progress.stage = "playing";
   db.seenCandidateIds = unique([...db.seenCandidateIds, candidate.id]);
-  updateProgress();
+  if (!updateProgress()) { db = beforePlay; render(); return; }
   const ok = speak(candidate.text, {
     onend: () => {
       attempt.audioCompleted = true;
@@ -363,25 +420,124 @@ function playSentence() {
   });
   if (!ok) { session.progress.stage = "ready"; updateProgress(); }
 }
-function showSentenceText() {
-  const attempt = activeSession()?.progress.activeAttempt;
-  if (!attempt || !attempt.playCount || attempt.overallStatus) return;
-  attempt.textShown = true;
-  updateProgress();
+function taskType(item) {
+  return item.task_type || ({ Word: "word", Chunk: "chunk", Frame: "sentence_understanding" })[item.kind];
+}
+function cancelAutomaticMeaning() {
+  if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+  feedbackTimer = null;
+}
+function scheduleAutomaticMeaning() {
+  cancelAutomaticMeaning();
+  const session = activeSession();
+  if (!session || currentView !== "train" || session.progress.stage !== "spelling" || session.progress.paused || document.hidden || $("optionalDiagnosis").open) return;
+  feedbackTimer = setTimeout(() => {
+    feedbackTimer = null;
+    if (currentView === "train" && activeSession()?.progress.stage === "spelling" && !activeSession().progress.paused && !document.hidden && !$("optionalDiagnosis").open) revealMeaning();
+  }, 3000);
 }
 function chooseRating(value) {
   const session = activeSession();
   const attempt = session?.progress.activeAttempt;
-  if (!attempt || !attempt.audioCompleted || session.progress.stage !== "rating") return;
-  attempt.overallStatus = value;
-  if (value === "not_understood") {
-    session.progress.stage = "reason";
-    selectedReason = null;
-    $("reasonDetails").open = false;
-    $("noteInput").value = $("quickNote").value;
-    updateProgress();
+  if (!attempt || !attempt.audioCompleted || !["rating", "correcting"].includes(session.progress.stage)) return;
+  if (!["direct", "slow", "not_understood", "target_sound", "target_meaning", "integration"].includes(value)) return;
+  const status = value === "direct" && attempt.playCount > 1 ? "slow" : ["direct", "slow"].includes(value) ? value : "not_understood";
+  const difficulty = ["target_sound", "target_meaning", "integration"].includes(value) ? value : null;
+  cancelAutomaticMeaning();
+  if (!commitChange(() => {
+    if (!attempt.firstJudgment) attempt.firstJudgment = { understanding: status, difficulty, at: now() };
+    else {
+      attempt.judgmentCorrected = true;
+      if (attempt.textShown || attempt.answerShown) attempt.promptedCorrection = true;
+    }
+    attempt.overallStatus = status;
+    attempt.difficultyType = difficulty;
+    attempt.judgedAt = now();
+    attempt.note = $("quickNote").value.trim() || attempt.note || "";
+    if (status === "not_understood") {
+      attempt.textShown = true;
+      attempt.textShownAfterJudgment = true;
+      session.progress.stage = attempt.answerShown ? "answer" : "spelling";
+    } else {
+      session.progress.stage = attempt.answerShown ? "answer" : "judged";
+    }
+  })) return;
+  scheduleAutomaticMeaning();
+  if (status === "not_understood" && session.progress.stage === "spelling" && ["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
+}
+function revealSpelling() {
+  const session = activeSession();
+  const attempt = session?.progress.activeAttempt;
+  if (!attempt || !attempt.audioCompleted || !["rating", "judged"].includes(session.progress.stage)) return;
+  if (!commitChange(() => {
+    if (!attempt.firstJudgment) {
+      attempt.firstJudgment = { understanding: "not_understood", difficulty: null, at: now(), source: "answer_before_judgment" };
+      attempt.overallStatus = "not_understood";
+      attempt.difficultyType = null;
+      attempt.textShownBeforeJudgment = true;
+      attempt.judgedAt = now();
+      attempt.note = $("quickNote").value.trim();
+    }
+    attempt.textShown = true;
+    session.progress.stage = "spelling";
+  })) return;
+  scheduleAutomaticMeaning();
+  if (["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
+}
+function setWrittenCheck(value) {
+  const session = activeSession();
+  const attempt = session?.progress.activeAttempt;
+  if (!attempt || session.progress.stage !== "spelling" || !["recognized", "not_recognized"].includes(value)) return;
+  if (!["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) return;
+  commitChange(() => { attempt.writtenCheck = value; });
+}
+function setDifficulty(value) {
+  const session = activeSession();
+  const attempt = session?.progress.activeAttempt;
+  if (!attempt || session.progress.stage !== "spelling" || attempt.overallStatus !== "not_understood") return;
+  if (!["target_sound", "target_meaning", "integration"].includes(value)) return;
+  if (value === "integration" && taskType(currentItem()) !== "sentence_understanding") return;
+  commitChange(() => { attempt.difficultyType = value; });
+}
+function revealMeaning() {
+  const session = activeSession();
+  const attempt = session?.progress.activeAttempt;
+  if (!attempt || session.progress.stage !== "spelling") return;
+  cancelAutomaticMeaning();
+  commitChange(() => {
+    attempt.answerShown = true;
+    attempt.answerShownAt = now();
+    session.progress.stage = "answer";
+  });
+}
+function startCorrection() {
+  const session = activeSession();
+  if (!session?.progress.activeAttempt || !["judged", "spelling", "answer"].includes(session.progress.stage)) return;
+  cancelAutomaticMeaning();
+  commitChange(() => { session.progress.stage = "correcting"; });
+}
+function skipCurrent() {
+  const session = activeSession();
+  if (!session || session.progress.paused || !["ready", "rating"].includes(session.progress.stage)) return;
+  if (!session.progress.activeAttempt && !selectCandidate(false)) { if (!storageProblem) blockCurrentItem("no_unseen_candidate"); return; }
+  const attempt = session.progress.activeAttempt;
+  if (attempt.playCount > 0) {
+    if (!commitChange(() => {
+      attempt.firstJudgment = { understanding: "not_understood", difficulty: null, at: now(), source: "skip_after_attempt" };
+      attempt.overallStatus = "not_understood";
+      attempt.difficultyType = null;
+      attempt.judgedAt = now();
+      attempt.textShown = true;
+      session.progress.stage = "spelling";
+    })) return;
+    scheduleAutomaticMeaning();
+    if (["word", "chunk", "in_sentence_recognition"].includes(taskType(currentItem()))) playTarget();
   } else {
-    attempt.note = $("quickNote").value.trim();
+    if (!commitChange(() => {
+      attempt.overallStatus = "skipped";
+      attempt.skipReason = "not_attempted";
+      attempt.judgedAt = now();
+    })) return;
     finishAttempt();
   }
 }
@@ -389,50 +545,61 @@ function supportForAttempt(attempt) {
   return unique([
     ...attempt.supportBefore,
     ...(attempt.playCount > 1 ? ["replay"] : []),
-    ...(attempt.textShown ? ["sentence_text"] : [])
+    ...(attempt.textShown ? ["sentence_text"] : []),
+    ...(attempt.answerShown ? ["meaning"] : []),
+    ...(attempt.targetAudioPlayed ? ["target_audio"] : [])
   ]);
 }
 function finishAttempt() {
   const session = activeSession();
+  if (!session) return;
   const progress = session.progress;
   const attempt = progress.activeAttempt;
-  if (!attempt?.overallStatus) return;
-  attempt.recordedAt = now();
-  attempt.localDate = localDate(attempt.recordedAt);
-  attempt.recordId ||= newId();
-  attempt.supportUsed = supportForAttempt(attempt);
-  progress.attempts.push(structuredClone(attempt));
-  progress.activeAttempt = null;
-  $("quickNote").value = "";
-  $("noteInput").value = "";
+  if (!attempt?.overallStatus || !["judged", "answer", "spelling", "ready", "feedback", "continue"].includes(progress.stage)) return;
+  if (attempt.overallStatus === "not_understood" && progress.stage === "spelling" && !attempt.answerShown) return;
   const item = currentItem();
-  const count = progress.attempts.filter(a => a.itemId === item.id).length;
-  if (attempt.overallStatus !== "not_understood" || count >= item.max_observations) {
-    completeItem("local_observation_recorded");
-  } else if (["target_sound", "target_meaning"].includes(attempt.difficultyType)) {
-    progress.stage = "feedback";
-    progress.feedbackEvents.push({ itemId: item.id, afterCandidateId: attempt.candidateId, at: now(), supportUsed: ["spelling", "meaning"], reason: attempt.difficultyType });
-    updateProgress();
-  } else {
-    progress.stage = "continue";
-    updateProgress();
-  }
+  const count = progress.attempts.filter(a => a.itemId === item.id).length + 1;
+  const followup = attempt.overallStatus === "not_understood" && count < item.max_observations;
+  if (!commitChange(() => {
+    attempt.recordedAt = now();
+    attempt.localDate = localDate(attempt.recordedAt);
+    attempt.recordId ||= newId();
+    attempt.supportUsed = supportForAttempt(attempt);
+    progress.attempts.push(structuredClone(attempt));
+    progress.activeAttempt = null;
+    if (attempt.answerShown) progress.feedbackEvents.push({ itemId: item.id, afterCandidateId: attempt.candidateId, at: now(), supportUsed: unique(["spelling", "meaning", ...(attempt.targetAudioPlayed ? ["target_audio"] : [])]), reason: attempt.difficultyType });
+    if (!followup) {
+      progress.itemOutcomes[item.id] = { sessionGoalResult: attempt.overallStatus === "skipped" ? "not_observed" : "observed", localExitReason: attempt.overallStatus === "skipped" ? "not_attempted_skip" : "local_observation_recorded", at: now() };
+      progress.itemIndex += 1;
+      progress.stage = progress.itemIndex >= session.pack.items.length ? "complete" : "ready";
+    } else progress.stage = "continue";
+  })) return;
+  $("quickNote").value = "";
+  $("optionalDiagnosis").open = false;
+  if (followup) prepareFollowup();
 }
-function saveMiss() {
-  const attempt = activeSession()?.progress.activeAttempt;
-  if (!attempt || attempt.overallStatus !== "not_understood") return;
-  attempt.difficultyType = selectedReason || null;
-  attempt.note = $("noteInput").value.trim();
+function playNext() {
+  const session = activeSession();
+  const progress = session?.progress;
+  if (!progress || progress.paused || !["judged", "answer", "feedback", "continue"].includes(progress.stage)) return;
+  const oldCount = progress.attempts.length;
+  cancelAutomaticMeaning();
   finishAttempt();
+  const next = activeSession()?.progress;
+  if (next?.attempts.length === oldCount + 1 && next.stage === "ready") playSentence();
 }
 function playTarget() {
   const item = currentItem();
   const session = activeSession();
-  if (!item || session.progress.stage !== "feedback") return;
-  const event = [...session.progress.feedbackEvents].reverse().find(e => e.itemId === item.id);
+  if (!item || !["spelling", "answer", "feedback"].includes(session.progress.stage)) return;
   speak(item.feedback.spelling, {
     onend: () => {
-      if (event) { event.supportUsed = unique([...event.supportUsed, "target_audio"]); updateProgress(); }
+      const attempt = session.progress.activeAttempt;
+      if (attempt) commitChange(() => { attempt.targetAudioPlayed = true; });
+      else {
+        const event = [...session.progress.feedbackEvents].reverse().find(e => e.itemId === item.id);
+        if (event) { event.supportUsed = unique([...event.supportUsed, "target_audio"]); updateProgress(); }
+      }
     },
     onerror: () => { $("playStatus").textContent = "目标发音未完成，请重试。"; }
   });
@@ -440,8 +607,7 @@ function playTarget() {
 function prepareFollowup() {
   const session = activeSession();
   if (!session || !["feedback", "continue"].includes(session.progress.stage)) return;
-  if (session.progress.stage === "feedback" && !currentSupport(currentItem().id).includes("target_audio")) return;
-  if (!selectCandidate(true)) { blockCurrentItem("no_unseen_fallback"); return; }
+  if (!selectCandidate(true)) { if (!storageProblem) blockCurrentItem("no_unseen_fallback"); return; }
   $("revealedText").textContent = "";
   render();
 }
@@ -449,26 +615,18 @@ function blockCurrentItem(reason) {
   const session = activeSession();
   const item = currentItem();
   if (!session || !item) return;
-  session.progress.itemOutcomes[item.id] = { sessionGoalResult: "not_observed", localExitReason: reason, at: now() };
-  session.progress.stage = "blocked";
-  updateProgress();
+  commitChange(() => {
+    session.progress.itemOutcomes[item.id] = { sessionGoalResult: "not_observed", localExitReason: reason, at: now() };
+    session.progress.stage = "blocked";
+  });
   $("playStatus").textContent = "没有合格的新句可继续。请导出记录，交给 Work 补充训练包。";
-}
-function completeItem(reason) {
-  const session = activeSession();
-  const progress = session.progress;
-  const item = currentItem();
-  progress.itemOutcomes[item.id] = { sessionGoalResult: "observed", localExitReason: reason, at: now() };
-  progress.itemIndex += 1;
-  progress.stage = progress.itemIndex >= session.pack.items.length ? "complete" : "ready";
-  updateProgress();
 }
 function togglePause() {
   const session = activeSession();
   if (!session) return;
+  cancelAutomaticMeaning();
   if (!session.progress.paused) interruptAudio();
-  session.progress.paused = !session.progress.paused;
-  updateProgress();
+  if (commitChange(() => { session.progress.paused = !session.progress.paused; })) scheduleAutomaticMeaning();
 }
 function interpretedLayers(attempt) {
   const result = { target_sound_recognition: "uncertain", target_meaning_access: "uncertain", sentence_integration: "uncertain" };
@@ -492,10 +650,15 @@ function exportSession(session) {
       ...(operationTestOnly ? ["prior_target_exposure"] : []),
       ...(reviewAtPlay ? ["review_session"] : []),
       ...(priorExposure ? ["prior_target_exposure"] : []),
-      ...(!operationTestOnly && !reviewAtPlay && !priorExposure && attempt.playCount === 1 && !attempt.partialAudio && !attempt.textShown && !attempt.supportBefore.length && !progress.attempts.slice(0, index).some(a => a.itemId === item.id) ? ["first_unprompted"] : []),
+      ...(!operationTestOnly && !reviewAtPlay && !priorExposure && attempt.playCount === 1 && !attempt.partialAudio && !attempt.textShownBeforeJudgment && !attempt.promptedCorrection && !attempt.supportBefore.length && !progress.attempts.slice(0, index).some(a => a.itemId === item.id) ? ["first_unprompted"] : []),
       ...(attempt.playCount > 1 ? ["replay_assisted"] : []),
       ...(attempt.partialAudio ? ["partial_audio_exposure"] : []),
       ...(attempt.textShown ? ["text_revealed"] : []),
+      ...(attempt.textShownBeforeJudgment ? ["text_before_judgment"] : []),
+      ...(attempt.answerShown ? ["answer_revealed"] : []),
+      ...(attempt.judgmentCorrected ? ["judgment_corrected"] : []),
+      ...(attempt.promptedCorrection ? ["corrected_after_prompt"] : []),
+      ...(attempt.overallStatus === "skipped" ? ["not_attempted_skip"] : []),
       ...(attempt.supportBefore.some(s => ["spelling", "meaning", "target_audio"].includes(s)) ? ["post_feedback_immediate"] : [])
     ];
     return {
@@ -504,13 +667,15 @@ function exportSession(session) {
       sentence: candidate.text, content_role: candidate.content_role,
       variation_dimensions: candidate.variation_dimensions,
       variation_detail: candidate.variation_detail,
-      use_anchor: item.use_anchor,
-      user_reported: { understanding: attempt.overallStatus, difficulty: attempt.difficultyType, note: attempt.note },
-      app_observed: { play_count: attempt.playCount, replay_count: Math.max(0, attempt.playCount - 1), audio_completed: attempt.audioCompleted, partial_audio: attempt.partialAudio, sentence_text_shown: attempt.textShown, support_used: attempt.supportUsed, exposure_flags: exposureFlags, voice: attempt.voice, voices_used: attempt.voicesUsed || (attempt.voice ? [attempt.voice] : []), rate: attempt.rate, started_at: attempt.lastPlayAt, recorded_at: attempt.recordedAt },
+      use_anchor: item.use_anchor, anchor_id: item.anchor_id, session_goal: item.session_goal,
+      item_kind: item.kind, task_type: taskType(item), target: item.target,
+      training_focus: item.training_focus, locked_meaning_or_function: item.locked_meaning_or_function,
+      user_reported: { understanding: attempt.overallStatus, difficulty: attempt.difficultyType, first_judgment: attempt.firstJudgment || null, written_check: attempt.writtenCheck || "not_checked", note: attempt.note },
+      app_observed: { play_count: attempt.playCount, replay_count: Math.max(0, attempt.playCount - 1), audio_completed: attempt.audioCompleted, partial_audio: attempt.partialAudio, sentence_text_shown: attempt.textShown, text_before_judgment: !!attempt.textShownBeforeJudgment, answer_shown: !!attempt.answerShown, judgment_corrected: !!attempt.judgmentCorrected, corrected_after_prompt: !!attempt.promptedCorrection, skip_reason: attempt.skipReason || null, support_used: attempt.supportUsed, exposure_flags: exposureFlags, voice: attempt.voice, voices_used: attempt.voicesUsed || (attempt.voice ? [attempt.voice] : []), rate: attempt.rate, selected_at: attempt.selectedAt, started_at: attempt.lastPlayAt, judged_at: attempt.judgedAt || null, recorded_at: attempt.recordedAt },
       interpretation: interpretedLayers(attempt)
     };
   });
-  const heardSentences = attempts.map(attempt => ({
+  const heardSentences = attempts.filter(attempt => attempt.app_observed.play_count > 0).map(attempt => ({
     order: attempt.order, item_id: attempt.item_id, candidate_id: attempt.candidate_id,
     sentence: attempt.sentence, play_count: attempt.app_observed.play_count,
     audio_completed: attempt.app_observed.audio_completed,
@@ -525,8 +690,14 @@ function exportSession(session) {
         item_id: pending.itemId, candidate_id: pending.candidateId, sentence: candidate.text,
         content_role: candidate.content_role, variation_dimensions: candidate.variation_dimensions,
         variation_detail: candidate.variation_detail, use_anchor: item.use_anchor,
+        item_kind: item.kind, task_type: taskType(item), target: item.target,
         play_count: pending.playCount, audio_completed: pending.audioCompleted,
         partial_audio: pending.partialAudio, sentence_text_shown: pending.textShown,
+        text_before_judgment: !!pending.textShownBeforeJudgment,
+        answer_shown: !!pending.answerShown, written_check: pending.writtenCheck || "not_checked",
+        first_judgment: pending.firstJudgment || null,
+        current_understanding: pending.overallStatus || null,
+        current_difficulty: pending.difficultyType || null,
         note_draft: pending.note || null, difficulty_draft: pending.draftReason || null
       };
       if (pending.playCount > 0) {
@@ -569,15 +740,27 @@ function downloadData(data, filename, mime = "application/json") {
 }
 function exportJson(fullBackup = false) {
   if (fullBackup && storageReadBlocked) {
-    $("dataStatus").textContent = "旧记录读取异常，无法制作可靠备份。请先下载异常原始数据。";
+    $("moreStatus").textContent = "旧记录读取异常，无法制作可靠备份。请先下载异常原始数据。";
     return;
   }
   if (fullBackup) {
     downloadData(JSON.stringify({ schema: "blind_listening_backup_v2", exported_at: now(), state: db }, null, 2),
       `blind-listening-full-backup-${localDate(now())}.json`);
-    $("dataStatus").textContent = "已尝试导出完整备份。请在“文件”中确认它已保存；备份含全部训练包和记录，不要误发给 Work。";
+    $("moreStatus").textContent = "已尝试下载完整备份。请在手机“文件”中确认保存；备份含全部历史，不要当成每日回传发给 Work。";
     return;
   }
+  const prepared = prepareIncrement();
+  if (!prepared) return;
+  downloadData(prepared.text, `blind-listening-to-work-${localDate(prepared.exportedAt)}-${prepared.exportId.slice(0, 8)}.json`);
+  $("dataStatus").textContent = `已尝试下载 ${prepared.recordIds.length} 条待回传记录。请确认文件已保存并交给 Work；下载不会清除待回传记录。`;
+}
+function payloadChecksum(data) {
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+function prepareIncrement() {
   if (storageReadBlocked) {
     $("dataStatus").textContent = "旧记录读取异常，无法可靠生成增量回传。请先下载异常原始数据。";
     return;
@@ -605,29 +788,71 @@ function exportJson(fullBackup = false) {
     $("dataStatus").textContent = "没有尚未确认回传的已完成练习记录。进行练习后再导出；未完成的当前句会保留在进度中。";
     return;
   }
-  const previousExport = Object.entries(db.pendingExports).find(([, manifest]) =>
+  const matchingExports = Object.entries(db.pendingExports).filter(([, manifest]) =>
     manifest.recordIds.length === recordIds.length && manifest.recordIds.every((id, index) => id === recordIds[index]));
-  const exportId = previousExport?.[0] || newId();
-  const exportedAt = previousExport?.[1].exportedAt || now();
+  const previousExport = matchingExports.find(([, manifest]) => manifest.payloadChecksum) || matchingExports[0];
+  // Keep pre-checksum manifests intact so previously downloaded files remain confirmable.
+  let exportId = previousExport?.[1].payloadChecksum ? previousExport[0] : newId();
+  let exportedAt = previousExport?.[1].payloadChecksum ? previousExport[1].exportedAt : now();
   const documentData = {
     schema: "blind_listening_increment_v2", export_id: exportId, exported_at: exportedAt,
     export_scope: "unacknowledged_completed_records", deduplicate_by: "record_id", record_count: recordIds.length,
     sessions, candidate_reuse_guard_ids: db.seenCandidateIds
   };
+  let checksum = payloadChecksum(documentData);
+  if (previousExport?.[1].payloadChecksum && previousExport[1].payloadChecksum !== checksum) {
+    exportId = newId(); exportedAt = now();
+    documentData.export_id = exportId; documentData.exported_at = exportedAt;
+    checksum = payloadChecksum(documentData);
+  }
+  documentData.payload_checksum = checksum;
   const previous = structuredClone(db.pendingExports);
-  db.pendingExports[exportId] = { recordIds, exportedAt };
+  db.pendingExports[exportId] = { recordIds, exportedAt, payloadChecksum: checksum };
   if (!saveStore()) {
     db.pendingExports = previous;
     $("dataStatus").textContent = "本机保存失败，未导出增量回传。请立即导出完整备份并确认文件已保存。";
+    return null;
+  }
+  return { text: JSON.stringify(documentData, null, 2), recordIds, exportId, exportedAt };
+}
+async function copyRecords() {
+  const prepared = prepareIncrement();
+  if (!prepared) return;
+  $("manualCopy").hidden = true;
+  $("manualCopyText").value = "";
+  const bytes = new TextEncoder().encode(prepared.text).length;
+  if (bytes > COPY_LIMIT) {
+    $("dataStatus").textContent = `完整记录约 ${Math.ceil(bytes / 1024)} KB，手机复制容易丢失。请点“下载 JSON 文件”；没有截断任何记录。`;
     return;
   }
-  downloadData(JSON.stringify(documentData, null, 2), `blind-listening-to-work-${localDate(exportedAt)}-${exportId.slice(0, 8)}.json`);
-  $("dataStatus").textContent = `已尝试导出 ${recordIds.length} 条待回传记录。请确认文件已保存并手动交给 Work；下载本身不会清除待回传记录。`;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("浏览器不支持直接复制");
+    await navigator.clipboard.writeText(prepared.text);
+    $("dataStatus").textContent = `已复制完整的 ${prepared.recordIds.length} 条记录。请发给 Work；复制不等于成功回传。`;
+  } catch (_) {
+    $("manualCopyText").value = prepared.text;
+    $("manualCopy").hidden = false;
+    $("manualCopy").open = true;
+    $("dataStatus").textContent = "自动复制被浏览器阻止。可长按下方内容全选复制，或下载 JSON 文件；记录仍待回传。";
+  }
 }
 async function confirmReturned(file) {
   try {
     if (file.size > MAX_BACKUP_BYTES) throw new Error("文件超过 25 MB。");
-    const report = JSON.parse(await file.text());
+    await confirmReturnedReport(JSON.parse(await file.text()));
+  } catch (error) { $("dataStatus").textContent = `确认失败：${error.message}`; }
+  finally { $("confirmReturned").value = ""; }
+}
+async function confirmPasted() {
+  try {
+    const value = $("confirmPaste").value.trim();
+    if (new TextEncoder().encode(value).length > MAX_BACKUP_BYTES) throw new Error("内容超过 25 MB，请使用文件。");
+    await confirmReturnedReport(JSON.parse(value));
+    if ($( "dataStatus" ).textContent.startsWith("已确认")) $("confirmPaste").value = "";
+  } catch (error) { $("dataStatus").textContent = `确认失败：${error.message}`; }
+}
+async function confirmReturnedReport(report) {
+  try {
     if (report?.schema !== "blind_listening_increment_v2" || typeof report.export_id !== "string") {
       throw new Error("请选择此前导出的每日回传 JSON，而非完整备份。");
     }
@@ -640,6 +865,13 @@ async function confirmReturned(file) {
     if (!pending) throw new Error("找不到这份导出文件的本机待确认记录，不能确认回传。");
     if (ids.length !== pending.recordIds.length || ids.some((id, index) => id !== pending.recordIds[index])) {
       throw new Error("文件中的记录编号与当时导出的清单不一致。");
+    }
+    if (pending.payloadChecksum) {
+      const withoutChecksum = { ...report };
+      delete withoutChecksum.payload_checksum;
+      if (report.payload_checksum !== pending.payloadChecksum || payloadChecksum(withoutChecksum) !== pending.payloadChecksum) {
+        throw new Error("记录内容与当时导出的版本不一致，请使用原始完整数据。");
+      }
     }
     const remaining = pending.recordIds.filter(id => !db.acknowledgedRecordIds.includes(id));
     if (!remaining.length) {
@@ -660,14 +892,13 @@ async function confirmReturned(file) {
       throw new Error("本机保存失败，回传进度没有更新。请保留导出文件。");
     }
     $("dataStatus").textContent = `已确认回传 ${remaining.length} 条记录。原始记录仍保留；之后新增的记录仍会出现在下一份增量文件中。`;
-  } catch (error) { $("dataStatus").textContent = `确认失败：${error.message}`; }
-  finally { $("confirmReturned").value = ""; }
+  } catch (error) { throw error; }
 }
 function validateBackupState(state) {
   if (!state || state.version !== 2 || !state.sessions || Array.isArray(state.sessions) ||
       typeof state.sessions !== "object" || !Array.isArray(state.seenCandidateIds) ||
       state.seenCandidateIds.some(id => typeof id !== "string") ||
-      !Array.isArray(state.acknowledgedRecordIds) || !state.pendingExports ||
+      !Array.isArray(state.acknowledgedRecordIds) || (state.allowRemoteVoice !== undefined && typeof state.allowRemoteVoice !== "boolean") || !state.pendingExports ||
       typeof state.pendingExports !== "object" || Array.isArray(state.pendingExports)) throw new Error("备份的存储结构无效。");
   const keys = Object.keys(state.sessions);
   if (keys.length > 1000) throw new Error("备份的训练轮次数量异常。");
@@ -684,7 +915,7 @@ function validateBackupState(state) {
     validatePack(session.pack);
     const progress = session.progress;
     if (!Number.isInteger(progress.itemIndex) || progress.itemIndex < 0 || progress.itemIndex > session.pack.items.length ||
-        !["ready", "playing", "rating", "reason", "feedback", "continue", "blocked", "complete"].includes(progress.stage) ||
+        !["ready", "playing", "rating", "reason", "judged", "correcting", "spelling", "answer", "feedback", "continue", "blocked", "complete"].includes(progress.stage) ||
         typeof progress.paused !== "boolean" ||
         !Array.isArray(progress.attempts) || !Array.isArray(progress.feedbackEvents) ||
         !progress.itemOutcomes || typeof progress.itemOutcomes !== "object" ||
@@ -744,11 +975,12 @@ async function importBackup(file) {
       showStorageProblem();
       throw new Error("本机保存失败，备份未恢复。请查看页面上的存储错误。");
     }
-    selectedReason = activeSession()?.progress.activeAttempt?.draftReason || null;
+    allowRemoteVoice = !!db.allowRemoteVoice;
+    $("allowRemoteVoice").checked = allowRemoteVoice;
     refreshVoices();
     render();
-    $("dataStatus").textContent = "完整备份已恢复。请核对训练包与进度；声音需在这台设备重新试听。";
-  } catch (error) { $("dataStatus").textContent = `恢复失败：${error.message}`; }
+    $("moreStatus").textContent = "完整备份已恢复。请核对训练包与进度；声音需在这台设备重新试听。";
+  } catch (error) { $("moreStatus").textContent = `恢复失败：${error.message}`; }
   finally { $("importBackup").value = ""; }
 }
 function exportDamagedRaw() {
@@ -756,8 +988,8 @@ function exportDamagedRaw() {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) throw new Error("没有可下载的原始存储内容。");
     downloadData(raw, `blind-listening-damaged-raw-${new Date().toISOString().slice(0, 10)}.txt`, "text/plain");
-    $("dataStatus").textContent = "已尝试下载异常原始数据。请先在“文件”里确认保存，再考虑恢复备份。";
-  } catch (error) { $("dataStatus").textContent = `原始数据导出失败：${error.message}`; }
+    $("moreStatus").textContent = "已尝试下载异常原始数据。请先在“文件”里确认保存，再考虑恢复备份。";
+  } catch (error) { $("moreStatus").textContent = `原始数据导出失败：${error.message}`; }
 }
 function render() {
   const session = activeSession();
@@ -773,6 +1005,13 @@ function render() {
   $("startNewSession").disabled = !session;
   if (session) sessionSelect.value = session.sessionId;
   const voiceReady = !!(db.voice?.approved && db.voice.key === $("voiceSelect").value && selectedVoice());
+  $("homeCard").hidden = !!session && voiceReady && !session.progress.paused && session.progress.stage !== "complete";
+  $("demoLink").hidden = DEMO_MODE || !!session;
+  $("homeTitle").textContent = session ? (session.progress.stage === "complete" ? "这包练完了" : "继续训练") : "还没有训练包";
+  $("homeSummary").textContent = session
+    ? `${session.pack.pack_id} · ${session.progress.stage === "complete" ? "可交回记录或开始新一轮" : `第 ${session.progress.itemIndex + 1} 项 / 共 ${session.pack.items.length} 项`}${session.progress.paused ? " · 已暂停" : ""}`
+    : "先到“材料与记录”粘贴 Work 给你的训练包。";
+  $("homeAction").textContent = session ? (session.progress.stage === "complete" ? "交回记录" : "继续训练") : "导入训练包";
   $("voiceCard").hidden = voiceReady;
   $("trainerCard").hidden = !voiceReady || !session;
   if (!session || !voiceReady) return;
@@ -780,32 +1019,54 @@ function render() {
   const item = currentItem();
   const attempt = progress.activeAttempt;
   const stage = progress.stage;
-  $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} 项 / 共 ${session.pack.items.length} 项` : "本次结束";
-  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "第 1 步：听一句", playing: "正在播放", rating: "第 2 步：选三档", reason: "保存“没听懂”", feedback: "目标词提示", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
-  $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "点“播放这一句”，只听意思，不用回答英语。", playing: "听完后，下方会出现三档理解状态。", rating: "只选一档；想重播就先点“重播”。", reason: "已经选了“没听懂”。可以直接保存，原因和备注都可不填。", feedback: "先听目标词的发音，再继续下一句。", continue: "这一句已保存，点下面继续听另一句。", blocked: "没有合格的新句；可导出记录交给 Work 补充材料。", complete: "记录已保存。需要交给 Work 时，点下方“下载未回传记录”。" })[stage] || "";
+  const activeTask = item ? taskType(item) : null;
+  const taskLabels = { word: "单词听辨", chunk: "词块听辨", in_sentence_recognition: "句中识别", sentence_understanding: "整句理解" };
+  $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} 项 / 共 ${session.pack.items.length} 项 · ${taskLabels[activeTask]}` : "本次结束";
+  $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "看正确意思", feedback: "目标词提示", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
+  $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "准备好就播放下一句。", spelling: "先看英文；意思稍后自动出现。要检查看字认识吗，可展开下方选项。", answer: "准备好就播放下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
+  $("playSentence").hidden = stage !== "ready" || progress.paused;
+  $("replaySentence").hidden = stage !== "rating" || progress.paused;
+  $("stopAudio").hidden = stage !== "playing" || progress.paused;
+  $("playSentence").parentElement.hidden = !["ready", "playing", "rating"].includes(stage) || progress.paused;
   $("playSentence").disabled = !controlsEnabled || stage !== "ready";
   $("replaySentence").disabled = !controlsEnabled || !attempt?.playCount;
   $("stopAudio").disabled = stage !== "playing";
-  $("showText").disabled = !controlsEnabled || !attempt?.playCount || !!attempt?.overallStatus;
-  $("revealedText").hidden = !attempt?.textShown;
+  $("skipCurrent").hidden = !["ready", "rating"].includes(stage) || progress.paused;
+  $("showText").disabled = stage !== "rating" || !attempt?.audioCompleted;
   $("revealedText").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
-  $("ratingPanel").hidden = stage !== "rating" || progress.paused;
-  $("reasonPanel").hidden = stage !== "reason" || progress.paused;
-  $("feedbackPanel").hidden = stage !== "feedback" || progress.paused;
-  $("continueAfterFeedback").disabled = stage !== "feedback" || !item || !currentSupport(item.id).includes("target_audio");
-  $("continuePanel").hidden = stage !== "continue" || progress.paused;
+  $("ratingPanel").hidden = !["rating", "correcting"].includes(stage) || progress.paused;
+  document.querySelectorAll("[data-rating='direct']").forEach(button => { button.textContent = (attempt?.playCount || 0) > 1 ? "重听后懂了" : "马上懂了"; });
+  document.querySelectorAll("[data-rating='slow']").forEach(button => { button.hidden = (attempt?.playCount || 0) > 1; });
+  $("judgedPanel").hidden = stage !== "judged" || progress.paused;
+  $("judgedSummary").textContent = `已记下：${attempt?.overallStatus === "direct" ? "马上懂了" : "后来才懂"}`;
+  $("spellingPanel").hidden = stage !== "spelling" || progress.paused;
+  $("writtenCheck").hidden = !["word", "chunk", "in_sentence_recognition"].includes(activeTask);
+  document.querySelectorAll("[data-written]").forEach(button => button.classList.toggle("selected", button.dataset.written === attempt?.writtenCheck));
+  $("reasonChoices").hidden = attempt?.overallStatus !== "not_understood";
+  document.querySelectorAll("[data-reason]").forEach(button => {
+    button.classList.toggle("selected", button.dataset.reason === attempt?.difficultyType);
+    button.hidden = button.dataset.reason === "integration" && activeTask !== "sentence_understanding";
+  });
+  $("answerPanel").hidden = stage !== "answer" || progress.paused;
+  $("answerEnglish").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
+  const finalItem = progress.itemIndex === session.pack.items.length - 1 &&
+    (attempt?.overallStatus !== "not_understood" || progress.attempts.filter(a => a.itemId === item?.id).length + 1 >= item?.max_observations);
+  document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "完成这轮" : "播放下一句"; });
+  $("legacyPanel").hidden = !["feedback", "continue"].includes(stage) || progress.paused;
+  $("legacyMessage").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "这句已记下，继续听另一句。";
+  $("legacyPlayTarget").hidden = stage !== "feedback";
   $("completePanel").hidden = stage !== "complete";
   $("completeMessage").textContent = storageProblem
     ? "本机保存存在问题。关闭页面前请导出完整备份，并检查文件确实保存。"
-    : "记录已保存在当前浏览器。下方可以下载未回传记录；完整备份在“备份、恢复和重新练”里。";
-  $("targetFeedback").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "";
-  if (stage === "rating") $("quickNote").value = attempt?.note || "";
-  if (stage === "reason") $("noteInput").value = attempt?.note || "";
-  $("continueMessage").textContent = stage === "continue" ? "这句已记下。下一句会更简短，先不把这次当成目标词没掌握。" : "";
-  $("playStatus").textContent = stage === "playing" ? "正在朗读…" : stage === "rating" ? "听完了：现在选下面三档中的一档。" : stage === "blocked" ? "候选句不足。请导出记录交给 Work 补充。" : "";
-  document.querySelectorAll(".reason").forEach(button => button.classList.toggle("selected", button.dataset.reason === selectedReason));
+    : DEMO_MODE ? "演示完成。可以在“更多”开始新一轮；演示记录不必交回 Work。"
+    : "记录已保存在当前浏览器。点“去交回记录”，复制或下载新增记录；完整备份在“更多”里。";
+  $("targetFeedback").textContent = stage === "answer" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "";
+  $("extraFeedback").hidden = !item?.feedback.details;
+  $("extraFeedback").textContent = item?.feedback.details || "";
+  if (["rating", "correcting"].includes(stage)) $("quickNote").value = attempt?.note || "";
+  $("playStatus").textContent = stage === "playing" ? "正在朗读…" : stage === "blocked" ? "候选句不足。请交回记录给 Work 补充。" : "";
 }
 function decodePastedPack(input) {
   let value = input.trim();
@@ -827,7 +1088,7 @@ function loadPackText(text) {
   const pack = validatePack(JSON.parse(text));
   interruptAudio();
   setActivePack(pack);
-  $("dataStatus").textContent = "训练包已载入。请回到上方：未确认声音先试听；已确认则点“播放这一句”。已有轮次会继续。";
+  $("dataStatus").textContent = `训练包 ${pack.pack_id} 已载入；已有轮次会继续，历史记录保留。`;
 }
 function importPastedPack() {
   try {
@@ -843,6 +1104,18 @@ async function importPack(file) {
   $("importPack").value = "";
 }
 function bindEvents() {
+  $("restartDemo").addEventListener("click", startNewSession);
+  document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => switchView(button.dataset.view)));
+  $("homeAction").addEventListener("click", () => {
+    const session = activeSession();
+    if (!session || session.progress.stage === "complete") switchView("materials");
+    else {
+      switchView("train");
+      if (session.progress.paused) togglePause();
+      ( $("trainerCard").hidden ? $("voiceCard") : $("trainerCard") ).scrollIntoView?.({ behavior: "smooth" });
+    }
+  });
+  $("goRecords").addEventListener("click", () => switchView("materials"));
   $("sessionSelect").addEventListener("change", () => {
     interruptAudio();
     const previous = db.activeSessionId;
@@ -853,14 +1126,15 @@ function bindEvents() {
       $("dataStatus").textContent = "保存失败，未切换轮次。";
       return;
     }
-    selectedReason = activeSession()?.progress.activeAttempt?.draftReason || null;
     render();
+    switchView("train");
   });
   $("startNewSession").addEventListener("click", startNewSession);
   $("refreshVoices").addEventListener("click", refreshVoices);
   $("allowRemoteVoice").addEventListener("change", () => {
     interruptAudio();
     allowRemoteVoice = $("allowRemoteVoice").checked;
+    db.allowRemoteVoice = allowRemoteVoice;
     db.voice = null;
     saveStore();
     refreshVoices();
@@ -878,24 +1152,27 @@ function bindEvents() {
   $("playSentence").addEventListener("click", playSentence);
   $("replaySentence").addEventListener("click", playSentence);
   $("stopAudio").addEventListener("click", interruptAudio);
-  $("showText").addEventListener("click", showSentenceText);
+  $("skipCurrent").addEventListener("click", skipCurrent);
+  $("showText").addEventListener("click", revealSpelling);
+  $("revealAfterJudgment").addEventListener("click", revealSpelling);
   document.querySelectorAll("[data-rating]").forEach(button => button.addEventListener("click", () => chooseRating(button.dataset.rating)));
-  document.querySelectorAll("[data-reason]").forEach(button => button.addEventListener("click", () => {
-    selectedReason = button.dataset.reason;
+  document.querySelectorAll("[data-reason]").forEach(button => button.addEventListener("click", () => setDifficulty(button.dataset.reason)));
+  $("optionalDiagnosis").addEventListener("toggle", () => { if ($("optionalDiagnosis").open) cancelAutomaticMeaning(); else scheduleAutomaticMeaning(); });
+  document.querySelectorAll("[data-correct]").forEach(button => button.addEventListener("click", startCorrection));
+  document.querySelectorAll("[data-written]").forEach(button => button.addEventListener("click", () => setWrittenCheck(button.dataset.written)));
+  $("quickNote").addEventListener("input", () => {
     const attempt = activeSession()?.progress.activeAttempt;
-    if (attempt) attempt.draftReason = selectedReason;
-    updateProgress();
-  }));
-  for (const id of ["quickNote", "noteInput"]) {
-    $(id).addEventListener("input", () => {
-      const attempt = activeSession()?.progress.activeAttempt;
-      if (attempt) { attempt.note = $(id).value; saveStore(); }
-    });
-  }
-  $("saveMiss").addEventListener("click", saveMiss);
+    if (attempt) {
+      const previous = attempt.note;
+      attempt.note = $("quickNote").value;
+      if (!saveStore()) attempt.note = previous;
+    }
+  });
+  $("revealMeaning").addEventListener("click", revealMeaning);
   $("playTarget").addEventListener("click", playTarget);
-  $("continueAfterFeedback").addEventListener("click", prepareFollowup);
-  $("continueNext").addEventListener("click", prepareFollowup);
+  document.querySelectorAll("[data-play-next]").forEach(button => button.addEventListener("click", playNext));
+  $("legacyPlayTarget").addEventListener("click", playTarget);
+  $("legacyContinue").addEventListener("click", prepareFollowup);
   $("pauseSession").addEventListener("click", togglePause);
   $("changeVoice").addEventListener("click", () => {
     interruptAudio();
@@ -904,31 +1181,49 @@ function bindEvents() {
     refreshVoices();
   });
   $("exportJson").addEventListener("click", () => exportJson(false));
+  $("copyRecords").addEventListener("click", copyRecords);
+  $("confirmPasted").addEventListener("click", confirmPasted);
   $("confirmReturned").addEventListener("change", event => { if (event.target.files[0]) confirmReturned(event.target.files[0]); });
   $("exportAllJson").addEventListener("click", () => exportJson(true));
   $("importBackup").addEventListener("change", event => { if (event.target.files[0]) importBackup(event.target.files[0]); });
   $("exportDamagedRaw").addEventListener("click", exportDamagedRaw);
   $("importPack").addEventListener("change", event => { if (event.target.files[0]) importPack(event.target.files[0]); });
   $("importPastedPack").addEventListener("click", importPastedPack);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) interruptAudio(); });
-  window.addEventListener("pagehide", interruptAudio);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { cancelAutomaticMeaning(); interruptAudio(); } else scheduleAutomaticMeaning(); });
+  window.addEventListener("pagehide", () => { cancelAutomaticMeaning(); interruptAudio(); });
 }
 async function init() {
   bindEvents();
+  $("demoBanner").hidden = !DEMO_MODE;
   showStorageProblem();
+  allowRemoteVoice = !!db.allowRemoteVoice;
+  $("allowRemoteVoice").checked = allowRemoteVoice;
   if (!db.activeSessionId) {
-    $("dataStatus").textContent = "还没有训练包：从手机“文件”选 JSON，或展开“从聊天粘贴训练包”。";
+    $("dataStatus").textContent = "还没有训练包：可在这里粘贴完整 JSON 或传输码，也可从手机“文件”选择 JSON。";
   } else {
     const progress = activeSession()?.progress;
-    selectedReason = progress?.activeAttempt?.draftReason || null;
     if (progress?.stage === "playing") {
       progress.stage = "ready";
       if (progress.activeAttempt) progress.activeAttempt.partialAudio = true;
       saveStore();
     }
+    if (progress?.stage === "reason" && progress.activeAttempt?.overallStatus === "not_understood") {
+      progress.activeAttempt.firstJudgment ||= { understanding: "not_understood", difficulty: progress.activeAttempt.draftReason || null, at: now(), source: "legacy_pending_reason" };
+      progress.activeAttempt.difficultyType = progress.activeAttempt.draftReason || null;
+      progress.activeAttempt.textShown = true;
+      progress.activeAttempt.textShownAfterJudgment = true;
+      progress.stage = "spelling";
+      saveStore();
+    }
   }
   if (synth) synth.onvoiceschanged = refreshVoices;
   refreshVoices();
+  if (DEMO_MODE && !db.activeSessionId && !storageReadBlocked) {
+    try { setActivePack(DEMO_PACK); }
+    catch (error) { $("dataStatus").textContent = `演示包未载入：${error.message}`; }
+  }
   render();
+  scheduleAutomaticMeaning();
+  switchView("train");
 }
 init();
