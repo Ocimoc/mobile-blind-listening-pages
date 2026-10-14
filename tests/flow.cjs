@@ -207,6 +207,10 @@ async function run() {
   assert.equal(failedConfirm.eval("db.acknowledgedRecordIds.length"), 0, "failed ack save rolls back");
 
   resumed.eval('now = () => "2026-10-13T11:00:00.000Z"');
+  const beforeTodayPractice = resumed.downloads.length;
+  resumed.eval("exportJson(false, localDate(now()))");
+  assert.equal(resumed.downloads.length, beforeTodayPractice, "today export does not redownload yesterday's records");
+  assert.match(resumed.element("dataStatus").textContent, /今天没有待交回的已完成题目/);
   resumed.eval("startNewSession()");
   const reviewSession = resumed.eval("db.activeSessionId");
   assert.notEqual(reviewSession, firstSession);
@@ -214,16 +218,26 @@ async function run() {
   resumed.eval("db.seenCandidateIds = pack.items[0].candidates.map(candidate => candidate.id); saveStore()");
   assert.equal(resumed.eval("!!selectCandidate(false)"), true, "old seen IDs must not block a review session");
   resumed.eval('activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = "direct"; finishAttempt()');
+  assert.match(resumed.element("recordSummary").textContent, /本机已完成 2 条题目/);
+  assert.match(resumed.element("recordSummary").textContent, /待交回 2 条/);
   resumed.eval("exportJson(false)");
   const missedDayExport = await resumed.lastDownload();
   assert.equal(missedDayExport.record_count, 2, "unconfirmed records survive missed reporting days");
+  assert.match(resumed.element("dataStatus").textContent, /最新一题记录于/);
   assert.equal(missedDayExport.sessions.length, 2, "increment spans sessions");
+  resumed.eval("exportJson(false, localDate(now()))");
+  const todayOnlyExport = await resumed.lastDownload();
+  assert.equal(todayOnlyExport.record_count, 1, "today export excludes old unconfirmed records without requiring acknowledgment");
+  assert.equal(todayOnlyExport.selected_local_date, resumed.eval("localDate(now())"));
+  assert.equal(todayOnlyExport.sessions[0].session_id, reviewSession);
+  assert.equal(resumed.eval("db.acknowledgedRecordIds.length"), 0, "today export does not acknowledge old records");
   assert.ok(missedDayExport.sessions[1].attempts[0].app_observed.exposure_flags.includes("review_session"));
   assert.ok(missedDayExport.sessions[1].attempts[0].app_observed.exposure_flags.includes("prior_target_exposure"));
   assert.ok(!missedDayExport.sessions[1].attempts[0].app_observed.exposure_flags.includes("first_unprompted"));
   resumed.context.firstFile = resumed.file(firstExport);
   await resumed.eval("confirmReturned(firstFile)");
   assert.deepEqual(Array.from(resumed.eval("db.acknowledgedRecordIds")), [firstId]);
+  assert.match(resumed.element("recordSummary").textContent, /待交回 1 条/);
   resumed.eval("exportJson(false)");
   const remainingExport = await resumed.lastDownload();
   assert.equal(remainingExport.record_count, 1, "first confirmation must not acknowledge later record");

@@ -16,7 +16,7 @@
 
 ## 增量回传
 
-仍输出 `blind_listening_increment_v2`，只含尚未确认回传的**已完成记录**。`record_id` 用于 Work 去重，`pack_id`、`session_id`、`local_date` 和时间戳用于跨天、跨轮次整理；`content_role`、`variation_dimensions`、`candidate_reuse_guard_ids` 用于区分旧句、新句和变化维度。
+仍输出 `blind_listening_increment_v2`，只含尚未确认回传的**已完成记录**。默认“下载今天记录”只选手机本地日期为当天的未确认记录，并增加可选 `selected_local_date` 字段；“下载全部待交回记录”沿用旧行为，包含所有日期的未确认记录。两种导出都不要求先确认旧文件，也不删除原始记录。`record_id` 用于 Work 去重，`pack_id`、`session_id`、`local_date` 和时间戳用于跨天、跨轮次整理；`content_role`、`variation_dimensions`、`candidate_reuse_guard_ids` 用于区分旧句、新句和变化维度。
 
 每条记录继续包含旧字段 `user_reported.understanding/difficulty/note` 和 `app_observed.play_count/replay_count/audio_completed/partial_audio/sentence_text_shown/support_used/exposure_flags`。新记录另外包含：
 
@@ -39,6 +39,6 @@
 
 ## 复制、确认与备份
 
-复制与下载使用同一完整增量 JSON，不截断。`export_id`、`record_count`、记录 ID 顺序和 `payload_checksum` 用于网页核对用户粘贴回来的**原始完整文件内容**。这个校验值用于发现意外改动，**不是服务器签名，也不能证明 Work 已收到**。目前没有 Work 端回执协议，因此用户只有在 Work 真正接收并核对后才手动确认。旧导出清单没有校验值时仍按原有记录 ID 规则处理。重复发送请 Work 按 `record_id` 去重；确认失败保留待回传状态。
+同一范围的复制与下载使用同一完整增量 JSON，不截断。`export_id`、`record_count`、记录 ID 顺序和 `payload_checksum` 用于网页核对用户粘贴回来的**原始完整文件内容**。这个校验值用于发现意外改动，**不是服务器签名，也不能证明 Work 已收到**。目前没有 Work 端回执协议，因此用户只有在 Work 真正接收并核对后才手动确认。旧导出清单没有校验值时仍按原有记录 ID 规则处理。重复发送请 Work 按 `record_id` 去重；确认失败保留待回传状态。
 
 `blind_listening_backup_v2` 是单独的完整备份，包含训练包、进度、旧记录和回传状态，不当作每日增量发送。恢复只接受没有任何轮次的浏览器环境，或在旧存储损坏且用户确认时覆盖；不会静默覆盖现有历史。

@@ -185,10 +185,12 @@
       </div>
       <div class="data-group">
           <h3>交回练习记录</h3>
-          <p class="muted">先下载 JSON 到手机“文件”，确认保存后经豆包传到电脑，再交给 Work。也可复制完整记录。下载或复制都不会标记为已回传。</p>
+           <p id="recordSummary" class="muted" role="status"></p>
+           <p class="muted">平时下载今天的记录交给 Work；以前漏交的题可另下载全部待交回记录。确认回传只做标记，不删除原始练习，也不影响新题导出。</p>
         <div class="button-row">
-            <button id="exportJson" type="button" class="button primary">下载未回传记录 JSON</button>
-            <button id="copyRecords" type="button" class="button secondary">复制未回传记录</button>
+             <button id="exportJson" type="button" class="button primary">下载今天记录 JSON</button>
+             <button id="copyRecords" type="button" class="button secondary">复制今天记录</button>
+             <button id="exportAllPending" type="button" class="button ghost">下载全部待交回记录</button>
         </div>
           <details id="manualCopy" hidden>
             <summary>复制按钮不可用时，展开手动复制</summary>
@@ -220,6 +222,6 @@
       </section>
     </div>
   </main>
-  <script src="app.js?v=20261011-5" defer></script>
+  <script src="app.js?v=20261014-1" defer></script>
 </body>
 </html>

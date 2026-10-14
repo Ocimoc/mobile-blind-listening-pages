@@ -90,6 +90,7 @@ async function run() {
     assert.equal(await page.locator("#completePanel").isVisible(), true);
     await page.locator("#goRecords").click();
     assert.equal(await page.locator("#materialsView").isVisible(), true);
+    assert.match(await page.locator("#recordSummary").innerText(), /本机已完成 1 条题目，今天 1 条，待交回 1 条/);
     if (process.env.BLP_MATERIALS_SCREENSHOT) await page.screenshot({ path: process.env.BLP_MATERIALS_SCREENSHOT, fullPage: true });
     const [download] = await Promise.all([
       page.waitForEvent("download"),
@@ -100,8 +101,8 @@ async function run() {
     assert.equal(JSON.parse(fs.readFileSync(await download.path(), "utf8")).record_count, 1);
     assert.equal(await page.evaluate(() => db.acknowledgedRecordIds.length), 0, "downloading is not handoff confirmation");
     await page.locator("#copyRecords").click();
-    await page.waitForFunction(() => /已复制完整|复制失败/.test(document.getElementById("dataStatus").textContent));
-    assert.match(await page.locator("#dataStatus").innerText(), /已复制完整/);
+    await page.waitForFunction(() => /已复制今天|复制失败/.test(document.getElementById("dataStatus").textContent));
+    assert.match(await page.locator("#dataStatus").innerText(), /已复制今天/);
     const copied = await page.evaluate(() => navigator.clipboard.readText());
     const report = JSON.parse(copied);
     assert.equal(report.record_count, 1);

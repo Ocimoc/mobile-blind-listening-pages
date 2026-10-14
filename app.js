@@ -800,7 +800,7 @@ function downloadData(data, filename, mime = "application/json") {
   // Keep the link and Blob available while the browser hands the file to its download manager.
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
 }
-function exportJson(fullBackup = false) {
+function exportJson(fullBackup = false, selectedLocalDate = null) {
   if (fullBackup && storageReadBlocked) {
     $("moreStatus").textContent = "旧记录读取异常，无法制作可靠备份。请先下载异常原始数据。";
     return;
@@ -811,10 +811,22 @@ function exportJson(fullBackup = false) {
     $("moreStatus").textContent = "已尝试下载完整备份。请在手机“文件”中确认保存；备份含全部历史，不要当成每日回传发给 Work。";
     return;
   }
-  const prepared = prepareIncrement();
+  const prepared = prepareIncrement(selectedLocalDate);
   if (!prepared) return;
   downloadData(prepared.text, `blind-listening-to-work-${localDate(prepared.exportedAt)}-${prepared.exportId.slice(0, 8)}.json`);
-  $("dataStatus").textContent = `已尝试下载 ${prepared.recordIds.length} 条待回传记录。请确认文件已保存并交给 Work；下载不会清除待回传记录。`;
+  const scope = selectedLocalDate ? "今天" : "全部待交回";
+  $("dataStatus").textContent = `已尝试下载${scope}的 ${prepared.recordIds.length} 条记录；最新一题记录于 ${recordTimeLabel(prepared.latestRecordedAt)}。请在手机“文件”中核对新下载的文件。`;
+}
+function recordTimeLabel(value) {
+  return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未知时间";
+}
+function completedRecordSummary() {
+  const attempts = Object.values(db.sessions).flatMap(session => session.progress.attempts);
+  const pending = attempts.filter(attempt => !db.acknowledgedRecordIds.includes(attempt.recordId));
+  const today = localDate(now());
+  const todayCount = attempts.filter(attempt => attempt.localDate === today).length;
+  const latest = attempts.map(attempt => attempt.recordedAt).filter(Boolean).sort().at(-1);
+  return { total: attempts.length, pending: pending.length, todayCount, latest };
 }
 function payloadChecksum(data) {
   const bytes = new TextEncoder().encode(JSON.stringify(data));
@@ -822,7 +834,7 @@ function payloadChecksum(data) {
   for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
-function prepareIncrement() {
+function prepareIncrement(selectedLocalDate = null) {
   if (storageReadBlocked) {
     $("dataStatus").textContent = "旧记录读取异常，无法可靠生成增量回传。请先下载异常原始数据。";
     return;
@@ -830,7 +842,8 @@ function prepareIncrement() {
   const acknowledged = new Set(db.acknowledgedRecordIds);
   const sessions = Object.values(db.sessions).map(session => {
     const all = exportSession(session);
-    const attempts = all.attempts.filter(attempt => !acknowledged.has(attempt.record_id));
+    const attempts = all.attempts.filter(attempt => !acknowledged.has(attempt.record_id) &&
+      (!selectedLocalDate || attempt.local_date === selectedLocalDate));
     if (!attempts.length) return null;
     const itemIds = unique(attempts.map(attempt => attempt.item_id));
     return {
@@ -847,7 +860,9 @@ function prepareIncrement() {
   }).filter(Boolean);
   const recordIds = sessions.flatMap(session => session.attempts.map(attempt => attempt.record_id));
   if (!recordIds.length) {
-    $("dataStatus").textContent = "没有尚未确认回传的已完成练习记录。进行练习后再导出；未完成的当前句会保留在进度中。";
+    $("dataStatus").textContent = selectedLocalDate
+      ? "今天没有待交回的已完成题目。未保存完的当前题不在导出中；昨天的记录仍可用“下载全部待交回记录”取得。"
+      : "没有尚未确认回传的已完成练习记录。进行练习后再导出；未完成的当前句会保留在进度中。";
     return;
   }
   const matchingExports = Object.entries(db.pendingExports).filter(([, manifest]) =>
@@ -859,6 +874,7 @@ function prepareIncrement() {
   const documentData = {
     schema: "blind_listening_increment_v2", export_id: exportId, exported_at: exportedAt,
     export_scope: "unacknowledged_completed_records", deduplicate_by: "record_id", record_count: recordIds.length,
+    ...(selectedLocalDate ? { selected_local_date: selectedLocalDate } : {}),
     sessions, candidate_reuse_guard_ids: db.seenCandidateIds
   };
   let checksum = payloadChecksum(documentData);
@@ -875,10 +891,12 @@ function prepareIncrement() {
     $("dataStatus").textContent = "本机保存失败，未导出增量回传。请立即导出完整备份并确认文件已保存。";
     return null;
   }
-  return { text: JSON.stringify(documentData, null, 2), recordIds, exportId, exportedAt };
+  const attempts = sessions.flatMap(session => session.attempts);
+  const latestRecordedAt = attempts.map(attempt => attempt.app_observed.recorded_at).filter(Boolean).sort().at(-1);
+  return { text: JSON.stringify(documentData, null, 2), recordIds, exportId, exportedAt, latestRecordedAt };
 }
-async function copyRecords() {
-  const prepared = prepareIncrement();
+async function copyRecords(selectedLocalDate = null) {
+  const prepared = prepareIncrement(selectedLocalDate);
   if (!prepared) return;
   $("manualCopy").hidden = true;
   $("manualCopyText").value = "";
@@ -890,7 +908,7 @@ async function copyRecords() {
   try {
     if (!navigator.clipboard?.writeText) throw new Error("浏览器不支持直接复制");
     await navigator.clipboard.writeText(prepared.text);
-    $("dataStatus").textContent = `已复制完整的 ${prepared.recordIds.length} 条记录。请发给 Work；复制不等于成功回传。`;
+    $("dataStatus").textContent = `已复制${selectedLocalDate ? "今天" : "全部待交回"}的 ${prepared.recordIds.length} 条记录。请发给 Work；复制不等于成功回传。`;
   } catch (_) {
     $("manualCopyText").value = prepared.text;
     $("manualCopy").hidden = false;
@@ -953,6 +971,7 @@ async function confirmReturnedReport(report) {
       db.pendingExports = previousPending;
       throw new Error("本机保存失败，回传进度没有更新。请保留导出文件。");
     }
+    render();
     $("dataStatus").textContent = `已确认回传 ${remaining.length} 条记录。原始记录仍保留；之后新增的记录仍会出现在下一份增量文件中。`;
   } catch (error) { throw error; }
 }
@@ -1054,6 +1073,8 @@ function exportDamagedRaw() {
   } catch (error) { $("moreStatus").textContent = `原始数据导出失败：${error.message}`; }
 }
 function render() {
+  const recordSummary = completedRecordSummary();
+  $("recordSummary").textContent = `本机已完成 ${recordSummary.total} 条题目，今天 ${recordSummary.todayCount} 条，待交回 ${recordSummary.pending} 条。最近一题：${recordTimeLabel(recordSummary.latest)}。未保存完的当前题不在内。`;
   const session = activeSession();
   const sessionSelect = $("sessionSelect");
   sessionSelect.replaceChildren();
@@ -1281,8 +1302,9 @@ function bindEvents() {
     saveStore();
     refreshVoices();
   });
-  $("exportJson").addEventListener("click", () => exportJson(false));
-  $("copyRecords").addEventListener("click", copyRecords);
+  $("exportJson").addEventListener("click", () => exportJson(false, localDate(now())));
+  $("copyRecords").addEventListener("click", () => copyRecords(localDate(now())));
+  $("exportAllPending").addEventListener("click", () => exportJson(false));
   $("confirmPasted").addEventListener("click", confirmPasted);
   $("confirmReturned").addEventListener("change", event => { if (event.target.files[0]) confirmReturned(event.target.files[0]); });
   $("exportAllJson").addEventListener("click", () => exportJson(true));
