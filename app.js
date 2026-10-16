@@ -124,8 +124,19 @@ function switchView(view) {
     button.classList.toggle("active", button.dataset.view === view);
     button.setAttribute("aria-current", button.dataset.view === view ? "page" : "false");
   });
+  syncTrainingLayout();
   window.scrollTo?.(0, 0);
   scheduleAutomaticMeaning();
+}
+function syncTrainingLayout() {
+  document.body.classList?.toggle("training-active", currentView === "train" && !$("trainerCard").hidden);
+}
+function showCurrentStep(id) {
+  if (currentView === "train" && !document.hidden) $(id)?.scrollIntoView?.({ block: "nearest" });
+}
+function showRecords() {
+  switchView("materials");
+  $("recordsSection")?.scrollIntoView?.({ block: "start" });
 }
 function activeSession() { return db.sessions[db.activeSessionId] || null; }
 function currentItem() {
@@ -370,12 +381,12 @@ function refreshVoices() {
   if (old && ((allowRemoteVoice && old === BROWSER_DEFAULT_VOICE) || voices.some(v => voiceKey(v) === old))) select.value = old;
   else if (preferred) select.value = voiceKey(preferred);
   $("voiceStatus").textContent = db.voice?.approved && select.value === db.voice.key
-    ? "已沿用上次确认的英语声音，可以继续训练。"
+    ? "已沿用上次确认的声音，可以继续训练。"
     : db.voice?.approved
       ? "上次确认的声音现在不可用。请重新检测或选择可用声音试听。"
       : voices.length
-        ? `可选 ${voices.length} 个英语声音。首次使用请试听并确认。`
-        : "没有检测到本机英语声音。若要尝试在线或来源未知的声音，请先勾选下方选项。";
+        ? `可选 ${voices.length} 个声音。首次使用请试听并确认。`
+        : "没有检测到本机可用声音。若要尝试在线或来源未知的声音，请先勾选下方选项。";
   $("previewVoice").disabled = !select.value;
   $("approveVoice").disabled = !select.value || !(db.voice?.approved && db.voice.key === select.value);
   render();
@@ -385,7 +396,7 @@ function selectedVoice() {
   return voices.find(v => voiceKey(v) === $("voiceSelect").value) || null;
 }
 function speak(text, callbacks = {}) {
-  if (!synth || !selectedVoice()) { $("playStatus").textContent = "没有可用英语声音。"; return false; }
+  if (!synth || !selectedVoice()) { $("playStatus").textContent = "没有可用声音。"; return false; }
   spokenToken += 1;
   const token = spokenToken;
   synth.cancel();
@@ -447,12 +458,13 @@ function playSentence() {
       attempt.lastCompletedAt = now();
       session.progress.stage = "rating";
       updateProgress();
+      showCurrentStep("ratingPanel");
     },
     onerror: () => {
       attempt.partialAudio = true;
       session.progress.stage = "ready";
       updateProgress();
-      $("playStatus").textContent = "朗读失败，请换一个英语声音后重试。";
+      $("playStatus").textContent = "朗读失败，请换一个声音后重试。";
     }
   });
   if (!ok) { session.progress.stage = "ready"; updateProgress(); }
@@ -503,6 +515,7 @@ function chooseRating(value) {
   if (firstSelection) {
     if (!replayFeedbackSentence()) scheduleAutomaticMeaning();
   } else scheduleAutomaticMeaning();
+  showCurrentStep(session.progress.stage === "answer" ? "answerPanel" : "spellingPanel");
 }
 function revealSpelling() {
   const session = activeSession();
@@ -521,6 +534,7 @@ function revealSpelling() {
     session.progress.stage = "spelling";
   })) return;
   if (!replayFeedbackSentence()) scheduleAutomaticMeaning();
+  showCurrentStep("spellingPanel");
 }
 function setWrittenCheck(value) {
   const session = activeSession();
@@ -542,17 +556,17 @@ function revealMeaning() {
   const attempt = session?.progress.activeAttempt;
   if (!attempt || session.progress.stage !== "spelling") return;
   cancelAutomaticMeaning();
-  commitChange(() => {
+  if (commitChange(() => {
     attempt.answerShown = true;
     attempt.answerShownAt = now();
     session.progress.stage = "answer";
-  });
+  })) showCurrentStep("answerPanel");
 }
 function startCorrection() {
   const session = activeSession();
   if (!session?.progress.activeAttempt || !["judged", "spelling", "answer"].includes(session.progress.stage)) return;
   cancelAutomaticMeaning();
-  commitChange(() => { session.progress.stage = "correcting"; });
+  if (commitChange(() => { session.progress.stage = "correcting"; })) showCurrentStep("ratingPanel");
 }
 function skipCurrent() {
   const session = activeSession();
@@ -625,7 +639,10 @@ function playNext() {
   interruptAudio();
   finishAttempt();
   const next = activeSession()?.progress;
-  if (next?.attempts.length === oldCount + 1 && next.stage === "ready") playSentence();
+  if (next?.attempts.length === oldCount + 1 && next.stage === "ready") {
+    playSentence();
+    showCurrentStep("playRow");
+  } else if (next?.stage === "complete") showCurrentStep("completePanel");
 }
 function replayFeedbackSentence() {
   const session = activeSession();
@@ -1097,18 +1114,21 @@ function render() {
   $("startNewSession").disabled = !session;
   if (session) sessionSelect.value = session.sessionId;
   const voiceReady = !!(db.voice?.approved && db.voice.key === $("voiceSelect").value && selectedVoice());
-  $("homeCard").hidden = !!session && voiceReady && !session.progress.paused && session.progress.stage !== "complete";
+  const paused = !!session?.progress.paused;
+  const completeWithoutVoice = session?.progress.stage === "complete" && !voiceReady;
+  $("homeCard").hidden = !!session && !paused && !completeWithoutVoice;
   $("demoLink").hidden = DEMO_MODE || !!session;
   $("homeTitle").textContent = session ? (session.progress.stage === "complete" ? "这包练完了" : "继续训练") : "还没有训练包";
   $("homeSummary").textContent = session
-    ? `${packDisplayName(session.pack)} · ${session.progress.stage === "complete" ? "可交回记录或开始新一轮" : `第 ${session.progress.itemIndex + 1} / ${session.pack.items.length} 项`}${session.progress.paused ? " · 已暂停" : ""}`
+    ? `${session.progress.stage === "complete" ? "可交回记录或开始新一轮" : `第 ${session.progress.itemIndex + 1} / ${session.pack.items.length} 项`}${session.progress.paused ? " · 已暂停" : ""}`
     : "先到“材料与记录”导入 Work 给你的训练包文件。";
-  $("homeAction").textContent = session ? (session.progress.stage === "complete" ? "交回记录" : voiceReady ? "继续训练" : "检查英语声音") : "导入训练包";
-  $("voiceCard").hidden = voiceReady;
-  $("trainerCard").hidden = !voiceReady || !session;
+  $("homeAction").textContent = session ? (session.progress.stage === "complete" ? "交回记录" : paused ? "继续" : voiceReady ? "继续训练" : "检查声音") : "导入训练包";
+  $("voiceCard").hidden = !session || voiceReady || paused || session.progress.stage === "complete";
+  $("trainerCard").hidden = !voiceReady || !session || paused;
+  syncTrainingLayout();
   if (session) {
     const completed = Math.min(session.progress.itemIndex, session.pack.items.length);
-    $("packProgressTitle").textContent = `${packDisplayName(session.pack)} · ${completed} / ${session.pack.items.length} 项已完成`;
+    $("packProgressTitle").textContent = `本包进度 ${completed} / ${session.pack.items.length}`;
     $("packProgress").max = session.pack.items.length;
     $("packProgress").value = completed;
   }
@@ -1118,20 +1138,18 @@ function render() {
   const attempt = progress.activeAttempt;
   const stage = progress.stage;
   const activeTask = item ? taskType(item) : null;
-  const taskLabels = { word: "单词听辨", chunk: "词块听辨", in_sentence_recognition: "句中识别", sentence_understanding: "整句理解" };
-  $("progressLabel").textContent = item ? `本包第 ${progress.itemIndex + 1} / ${session.pack.items.length} 项 · ${taskLabels[activeTask]}` : "本包已完成";
+  $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} / ${session.pack.items.length} 项` : "本包已完成";
   $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "核对刚才这句", feedback: "看刚才的反馈", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
-  $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "这是旧轮次留下的步骤，可核对这句。", spelling: attempt?.overallStatus === "not_understood" ? "已显示原句并重读整句；意思会自动出现，也可立即点“看这句的意思”。" : "已显示原句并重读整句；准备好时点“看这句的意思”。", answer: "核对后再继续下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
+  $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "这是旧轮次留下的步骤，可核对这句。", spelling: attempt?.overallStatus === "not_understood" ? "先核对原句；重听后会自动显示意思，也可立即查看。" : "准备好时点“立即看意思”。", answer: "核对后再继续下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
   $("playSentence").hidden = stage !== "ready" || progress.paused;
   $("replaySentence").hidden = stage !== "rating" || progress.paused;
   $("stopAudio").hidden = stage !== "playing" || progress.paused;
-  $("playSentence").parentElement.hidden = !["ready", "playing", "rating"].includes(stage) || progress.paused;
+  $("playRow").hidden = !["ready", "playing"].includes(stage) || progress.paused;
   $("playSentence").disabled = !controlsEnabled || stage !== "ready";
   $("replaySentence").disabled = !controlsEnabled || !attempt?.playCount;
   $("stopAudio").disabled = stage !== "playing";
-  $("skipCurrent").hidden = !["ready", "rating"].includes(stage) || progress.paused;
   $("showText").disabled = stage !== "rating" || !attempt?.audioCompleted;
   $("revealedText").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
   $("ratingPanel").hidden = !["rating", "correcting"].includes(stage) || progress.paused;
@@ -1153,7 +1171,7 @@ function render() {
   $("sentenceMeaning").textContent = currentCandidate()?.translation_zh || "当前训练包还没有这句的中文意思，请导入补充了整句意思的同一训练包。";
   const finalItem = progress.itemIndex === session.pack.items.length - 1 &&
     (attempt?.overallStatus !== "not_understood" || progress.attempts.filter(a => a.itemId === item?.id).length + 1 >= item?.max_observations);
-  document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "保存这题并结束本轮" : "保存这题并播放下一句"; });
+  document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "结束本轮" : "听下一句"; });
   $("legacyPanel").hidden = !["feedback", "continue"].includes(stage) || progress.paused;
   $("legacyMessage").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "这句已记下，继续听另一句。";
   $("legacyReplaySentence").hidden = !["feedback", "continue"].includes(stage);
@@ -1194,7 +1212,7 @@ function loadPackText(text) {
   interruptAudio();
   setActivePack(pack);
   $("dataStatus").textContent = `${packDisplayName(pack)}已载入；已有轮次会继续，历史记录保留。`;
-  $("trainNotice").textContent = db.voice?.approved ? "训练包已导入。沿用上次确认的声音，直接播放当前句。" : "训练包已导入。首次使用请试听并确认英语声音，然后播放第一句。";
+  $("trainNotice").textContent = db.voice?.approved ? "训练包已导入。沿用上次确认的声音，直接播放当前句。" : "训练包已导入。首次使用请试听并确认声音，然后播放第一句。";
   $("trainNotice").hidden = false;
   return pack;
 }
@@ -1227,14 +1245,15 @@ function bindEvents() {
   document.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => switchView(button.dataset.view)));
   $("homeAction").addEventListener("click", () => {
     const session = activeSession();
-    if (!session || session.progress.stage === "complete") switchView("materials");
+    if (!session) switchView("materials");
+    else if (session.progress.stage === "complete") showRecords();
     else {
       switchView("train");
       if (session.progress.paused) togglePause();
       ( $("trainerCard").hidden ? $("voiceCard") : $("trainerCard") ).scrollIntoView?.({ behavior: "smooth" });
     }
   });
-  $("goRecords").addEventListener("click", () => switchView("materials"));
+  $("goRecords").addEventListener("click", showRecords);
   $("sessionSelect").addEventListener("change", () => {
     interruptAudio();
     const previous = db.activeSessionId;
@@ -1264,14 +1283,13 @@ function bindEvents() {
     $("voiceStatus").textContent = "正在试听。请听完再确认声音是否清楚。";
     speak("Hello. Please listen to this voice.", {
       onend: () => { $("voiceStatus").textContent = "试听结束。若声音清楚，可开始训练。"; $("approveVoice").disabled = false; },
-      onerror: () => { $("voiceStatus").textContent = "试听失败。请换一个英语声音。"; }
+      onerror: () => { $("voiceStatus").textContent = "试听失败。请换一个声音。"; }
     });
   });
   $("approveVoice").addEventListener("click", () => { db.voice = { key: $("voiceSelect").value, approved: true, approvedAt: now() }; saveStore(); render(); });
   $("playSentence").addEventListener("click", playSentence);
   $("replaySentence").addEventListener("click", playSentence);
   $("stopAudio").addEventListener("click", interruptAudio);
-  $("skipCurrent").addEventListener("click", skipCurrent);
   $("showText").addEventListener("click", revealSpelling);
   $("revealAfterJudgment").addEventListener("click", revealSpelling);
   document.querySelectorAll("[data-rating]").forEach(button => button.addEventListener("click", () => chooseRating(button.dataset.rating)));

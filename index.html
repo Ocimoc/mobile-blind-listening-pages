@@ -5,19 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
-  <title>英语盲听</title>
-  <link rel="stylesheet" href="styles.css?v=20261011-4">
+  <title>练习</title>
+  <link rel="stylesheet" href="styles.css?v=20261016-2">
 </head>
 <body>
   <main class="shell">
     <p id="storageWarning" class="storage-warning" role="alert" hidden></p>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">手机训练</p>
-        <h1>英语盲听</h1>
-      </div>
-      <span class="privacy">句子默认隐藏 · 记录保存在当前浏览器</span>
-    </header>
+    <h1 class="sr-only">练习</h1>
 
     <nav class="main-nav" aria-label="页面区域">
       <button type="button" class="nav-button active" data-view="train">训练</button>
@@ -40,12 +34,12 @@
         <a id="demoLink" class="button secondary demo-link" href="index.html?demo=1">先用演示包试按钮</a>
       </section>
 
-    <section class="card voice-card" id="voiceCard">
-      <h2>先试听英语声音</h2>
+    <section class="card voice-card" id="voiceCard" hidden>
+      <h2>先试听声音</h2>
       <p class="muted">试听用的是无关样句，不会透露训练目标。确认声音清楚后开始。</p>
       <p id="voiceStatus" class="status" role="status">正在查找浏览器语音…</p>
       <label class="field-label" for="voiceSelect">朗读声音</label>
-      <select id="voiceSelect" aria-label="选择英语朗读声音"></select>
+      <select id="voiceSelect" aria-label="选择朗读声音"></select>
       <label class="voice-consent"><input id="allowRemoteVoice" type="checkbox"> 显示在线或来源未知的声音；朗读句子可能交给语音服务</label>
       <div class="button-row">
         <button id="previewVoice" type="button" class="button secondary">试听声音</button>
@@ -64,19 +58,20 @@
           <p class="eyebrow" id="progressLabel">第 1 项</p>
           <h2 id="stepTitle">准备听</h2>
         </div>
-        <div class="button-row session-actions">
-          <button id="changeVoice" type="button" class="button ghost">换声音</button>
-          <button id="pauseSession" type="button" class="button ghost">暂停</button>
-        </div>
+        <details class="session-actions">
+          <summary>选项</summary>
+          <div class="button-row">
+            <button id="changeVoice" type="button" class="button ghost">换声音</button>
+            <button id="pauseSession" type="button" class="button ghost">暂停</button>
+          </div>
+        </details>
       </div>
       <p id="instruction" class="muted">先听。听完只点一次，按刚才的真实情况选。</p>
-      <div class="play-row">
+      <div id="playRow" class="play-row">
         <button id="playSentence" type="button" class="play-button">播放这一句</button>
-        <button id="replaySentence" type="button" class="button secondary" disabled>重听整句</button>
         <button id="stopAudio" type="button" class="button ghost">停止声音</button>
       </div>
       <p id="playStatus" class="status" role="status"></p>
-      <button id="skipCurrent" type="button" class="text-link">跳过这题</button>
 
       <div id="ratingPanel" class="panel" hidden>
         <p class="panel-title">刚才听懂了吗？</p>
@@ -85,10 +80,11 @@
           <button type="button" class="choice" data-rating="slow">后来才懂</button>
           <button type="button" class="choice" data-rating="not_understood">还没懂</button>
         </div>
+        <button id="replaySentence" type="button" class="button secondary replay-before-rating" disabled>再听整句</button>
         <button id="replayCorrectingSentence" type="button" class="button secondary" hidden>再听整句</button>
-        <button id="showText" type="button" class="text-link answer-entry">先看英文（会记为没懂）</button>
         <details class="optional-note">
-          <summary>补充一句备注（可选）</summary>
+          <summary>其他操作（可选）</summary>
+          <button id="showText" type="button" class="text-link answer-entry">先看英文（会记为没懂）</button>
           <label class="field-label" for="quickNote">补充备注</label>
           <textarea id="quickNote" rows="2" placeholder="例如：认出了后半句，前半句没跟上"></textarea>
         </details>
@@ -124,10 +120,15 @@
           </div>
         </details>
         <div class="button-row">
-          <button id="replaySpellingSentence" type="button" class="button secondary">再听整句</button>
-          <button id="revealMeaning" type="button" class="button primary">看这句的意思</button>
-          <button type="button" class="button ghost" data-correct>改刚才的判断</button>
+          <button id="revealMeaning" type="button" class="button primary">立即看意思</button>
         </div>
+        <details class="optional-note">
+          <summary>再听或改判断</summary>
+          <div class="button-row">
+            <button id="replaySpellingSentence" type="button" class="button secondary">再听整句</button>
+            <button type="button" class="button ghost" data-correct>改刚才的判断</button>
+          </div>
+        </details>
       </div>
 
       <div id="answerPanel" class="panel feedback" hidden>
@@ -139,10 +140,15 @@
         <p id="targetFeedback"></p>
         <p id="extraFeedback" class="muted" hidden></p>
         <div class="button-row">
-          <button id="replayAnswerSentence" type="button" class="button secondary">再听整句</button>
-          <button type="button" class="button primary" data-play-next>播放下一句</button>
-          <button type="button" class="button ghost" data-correct>改刚才的判断</button>
+          <button type="button" class="button primary next-button" data-play-next>听下一句</button>
         </div>
+        <details class="optional-note">
+          <summary>再听或改判断</summary>
+          <div class="button-row">
+            <button id="replayAnswerSentence" type="button" class="button secondary">再听整句</button>
+            <button type="button" class="button ghost" data-correct>改刚才的判断</button>
+          </div>
+        </details>
       </div>
 
       <div id="legacyPanel" class="panel feedback" hidden>
@@ -183,7 +189,7 @@
           <p id="importStatus" class="import-status" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
-      <div class="data-group">
+      <div class="data-group" id="recordsSection">
           <h3>交回练习记录</h3>
            <p id="recordSummary" class="muted" role="status"></p>
            <p class="muted">平时下载今天的记录交给 Work；以前漏交的题可另下载全部待交回记录。确认回传只做标记，不删除原始练习，也不影响新题导出。</p>
@@ -222,6 +228,6 @@
       </section>
     </div>
   </main>
-  <script src="app.js?v=20261014-1" defer></script>
+  <script src="app.js?v=20261016-2" defer></script>
 </body>
 </html>

@@ -5,12 +5,10 @@ button, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
 .shell { max-width: 760px; margin: 0 auto; padding: 28px 18px 50px; }
-.topbar { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 22px; }
-h1 { font-size: 2rem; margin: 0; letter-spacing: -.035em; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 h2 { font-size: 1.13rem; margin: 0 0 8px; }
 h3 { margin: 0 0 6px; }
 .eyebrow { color: #5a7382; text-transform: uppercase; letter-spacing: .13em; font-size: .72rem; font-weight: 700; margin: 0 0 5px; }
-.privacy { color: #4b6774; background: #dce9ed; border-radius: 999px; padding: 7px 11px; font-size: .76rem; white-space: nowrap; }
 .card { background: #fff; border: 1px solid #dce4e8; border-radius: 18px; padding: 24px; margin: 0 0 16px; box-shadow: 0 7px 22px #1c38470b; }
 .main-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
 .demo-banner { margin-bottom: 16px; padding: 13px 16px; border: 1px solid #d6b86d; border-radius: 12px; background: #fff8e4; line-height: 1.5; }
@@ -45,8 +43,13 @@ textarea { resize: vertical; }
 .meaning-label { margin-top: 18px; margin-bottom: 7px; }
 .sentence-meaning { margin: 0; color: #183a47; font-size: 1.06rem; line-height: 1.65; }
 .section-head { display: flex; justify-content: space-between; gap: 15px; align-items: start; }
-.session-actions { margin-top: 0; justify-content: flex-end; }
+.session-actions { margin-top: 0; color: #145b69; font-size: .88rem; font-weight: 650; }
+.session-actions summary { cursor: pointer; text-align: right; }
+.session-actions .button-row { justify-content: flex-end; margin-top: 8px; }
 .play-row { margin: 25px 0 8px; }
+.trainer .status:empty { display: none; }
+.replay-before-rating { margin-top: 12px; }
+.next-button { width: 100%; }
 .play-button { border: 0; background: #154d61; color: white; min-width: 230px; min-height: 85px; padding: 15px 22px; border-radius: 16px; font-size: 1.25rem; font-weight: 700; box-shadow: 0 9px 18px #154d612e; }
 .play-button:hover:not(:disabled) { background: #0e4053; }
 .quiet-tools { margin-top: 18px; min-height: 35px; }
@@ -81,5 +84,22 @@ textarea { resize: vertical; }
 .paste-import summary { cursor: pointer; color: #145b69; font-weight: 650; }
 .paste-import textarea { margin-bottom: 9px; }
 [hidden] { display: none !important; }
-@media (max-width: 600px) { .shell { padding: 16px 12px 40px; } .topbar { align-items: start; flex-direction: column; } .privacy { white-space: normal; } .card { padding: 18px; } .section-head { display: block; } .session-actions { justify-content: flex-start; margin-top: 8px; } .play-button { width: 100%; } .play-row .button { flex: 1; } .choice { flex-basis: calc(50% - 5px); } .data-card { display: block; } .data-card .button-row { margin-top: 10px; } .data-group, .data-tools { margin-top: 16px; } }
+@media (max-width: 600px) { .shell { padding: 16px 12px 40px; } .card { padding: 18px; } .section-head { display: block; } .session-actions { margin-top: 8px; } .play-button { width: 100%; } .play-row .button { flex: 1; } .choice { flex-basis: calc(50% - 5px); } .data-card { display: block; } .data-card .button-row { margin-top: 10px; } .data-group, .data-tools { margin-top: 16px; }
+  body.training-active .shell { padding-top: 10px; }
+  body.training-active .main-nav { margin-bottom: 10px; }
+  body.training-active .trainer { padding: 16px; }
+  body.training-active .training-progress { margin-bottom: 10px; }
+  body.training-active .training-progress progress { height: 8px; }
+  body.training-active .section-head { display: flex; align-items: flex-start; }
+  body.training-active .section-head h2 { margin-bottom: 4px; }
+  body.training-active .session-actions { flex: none; margin-top: 2px; }
+  body.training-active .session-actions .button { min-height: 36px; padding: 6px 10px; font-size: .84rem; }
+  body.training-active #instruction { margin-bottom: 8px; }
+  body.training-active .play-row { margin: 12px 0 6px; }
+  body.training-active .play-button { min-height: 68px; }
+  body.training-active .panel { margin-top: 12px; padding-top: 12px; }
+  body.training-active #ratingPanel { border-top: 0; padding-top: 0; }
+  body.training-active #ratingPanel .panel-title { margin-bottom: 8px; }
+  body.training-active .optional-note { margin-top: 10px; }
+}
 @media (max-width: 370px) { .choice { flex-basis: 100%; } .nav-button { font-size: .85rem; } }
