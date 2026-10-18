@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>练习</title>
-  <link rel="stylesheet" href="styles.css?v=20261016-2">
+  <link rel="stylesheet" href="styles.css?v=20261017-1">
 </head>
 <body>
   <main class="shell">
@@ -75,13 +75,13 @@
 
       <div id="ratingPanel" class="panel" hidden>
         <p class="panel-title">刚才听懂了吗？</p>
+        <button id="replaySentence" type="button" class="button secondary replay-before-rating" disabled>再听整句</button>
+        <button id="replayCorrectingSentence" type="button" class="button secondary replay-before-rating" hidden>再听整句</button>
         <div class="rating-grid" role="group" aria-label="听后判断">
           <button type="button" class="choice" data-rating="direct">马上懂了</button>
           <button type="button" class="choice" data-rating="slow">后来才懂</button>
           <button type="button" class="choice" data-rating="not_understood">还没懂</button>
         </div>
-        <button id="replaySentence" type="button" class="button secondary replay-before-rating" disabled>再听整句</button>
-        <button id="replayCorrectingSentence" type="button" class="button secondary" hidden>再听整句</button>
         <details class="optional-note">
           <summary>其他操作（可选）</summary>
           <button id="showText" type="button" class="text-link answer-entry">先看英文（会记为没懂）</button>
