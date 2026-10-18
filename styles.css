@@ -48,7 +48,7 @@ textarea { resize: vertical; }
 .session-actions .button-row { justify-content: flex-end; margin-top: 8px; }
 .play-row { margin: 25px 0 8px; }
 .trainer .status:empty { display: none; }
-.replay-before-rating { margin-top: 12px; }
+.replay-before-rating { margin-bottom: 12px; }
 .next-button { width: 100%; }
 .play-button { border: 0; background: #154d61; color: white; min-width: 230px; min-height: 85px; padding: 15px 22px; border-radius: 16px; font-size: 1.25rem; font-weight: 700; box-shadow: 0 9px 18px #154d612e; }
 .play-button:hover:not(:disabled) { background: #0e4053; }
