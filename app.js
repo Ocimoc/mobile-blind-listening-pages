@@ -187,6 +187,13 @@ function validatePack(pack) {
     if (item.feedback.details !== undefined && typeof item.feedback.details !== "string") throw new Error("反馈说明格式无效。");
     if (item.task_type !== undefined && !["word", "chunk", "in_sentence_recognition", "sentence_understanding"].includes(item.task_type)) throw new Error("训练任务类型无效。");
     if (!Number.isInteger(item.max_observations) || item.max_observations < 1 || item.max_observations > 3) throw new Error("局部观察上限无效。");
+    if (item.practice_flow !== undefined && item.practice_flow !== "adaptive_new_sentence_v1") throw new Error("练习流程无效。");
+    if (item.practice_flow === "adaptive_new_sentence_v1") {
+      const roles = item.candidates.map(candidate => candidate.content_role);
+      if (item.max_observations !== 3 ||
+          ["initial", "relation_context", "form", "low_load_fallback"].some(role => roles.filter(value => value === role).length !== 1) ||
+          roles.length !== 4) throw new Error("换句挑战需要四条指定用途的新句。");
+    }
     itemIds.add(item.id);
   }
   for (const item of pack.items) {
@@ -329,10 +336,10 @@ function selectCandidate(followup) {
   const usedHere = progress.attempts.filter(a => a.itemId === item.id).map(a => a.candidateId);
   const ids = progress.candidateOrder[item.id];
   const available = ids.filter(id => !usedHere.includes(id));
-  const preferred = followup ? available.filter(id => ["low_load_fallback", "fallback"].includes(item.candidates.find(c => c.id === id).content_role)) : available.filter(id => {
-    const role = item.candidates.find(c => c.id === id).content_role;
-    return role === "initial" || role === "anchor";
-  });
+  const wantedRoles = followup === "relation_context" ? ["relation_context"]
+    : followup === "form" ? ["form"]
+    : followup ? ["low_load_fallback", "fallback"] : ["initial", "anchor"];
+  const preferred = available.filter(id => wantedRoles.includes(item.candidates.find(c => c.id === id).content_role));
   const id = preferred.find(candidateId => !db.seenCandidateIds.includes(candidateId)) ||
     (session.priorTargetByItem?.[item.id] ? preferred[0] : null);
   if (!id) return null;
@@ -602,6 +609,17 @@ function supportForAttempt(attempt) {
     ...(attempt.targetAudioPlayed ? ["target_audio"] : [])
   ]);
 }
+function nextRoleForItem(item, attempts) {
+  if (!item || !attempts.length) return null;
+  const last = attempts.at(-1);
+  if (last.overallStatus === "skipped") return null;
+  if (item.practice_flow === "adaptive_new_sentence_v1") {
+    if (attempts.length === 1) return last.overallStatus === "direct" ? null : "relation_context";
+    if (attempts.length === 2) return last.overallStatus === "direct" ? "form" : "fallback";
+    return null;
+  }
+  return last.overallStatus === "not_understood" && attempts.length < item.max_observations ? "fallback" : null;
+}
 function finishAttempt() {
   const session = activeSession();
   if (!session) return;
@@ -610,8 +628,8 @@ function finishAttempt() {
   if (!attempt?.overallStatus || !["judged", "answer", "spelling", "ready", "feedback", "continue"].includes(progress.stage)) return;
   if (attempt.overallStatus === "not_understood" && progress.stage === "spelling" && !attempt.answerShown) return;
   const item = currentItem();
-  const count = progress.attempts.filter(a => a.itemId === item.id).length + 1;
-  const followup = attempt.overallStatus === "not_understood" && count < item.max_observations;
+  const itemAttempts = [...progress.attempts.filter(a => a.itemId === item.id), attempt];
+  const followup = !!nextRoleForItem(item, itemAttempts);
   if (!commitChange(() => {
     attempt.recordedAt = now();
     attempt.localDate = localDate(attempt.recordedAt);
@@ -685,7 +703,9 @@ function replayFeedbackSentence() {
 function prepareFollowup() {
   const session = activeSession();
   if (!session || !["feedback", "continue"].includes(session.progress.stage)) return;
-  if (!selectCandidate(true)) { if (!storageProblem) blockCurrentItem("no_unseen_fallback"); return; }
+  const item = currentItem();
+  const role = nextRoleForItem(item, session.progress.attempts.filter(a => a.itemId === item?.id));
+  if (!role || !selectCandidate(role)) { if (!storageProblem) blockCurrentItem("no_unseen_fallback"); return; }
   $("revealedText").textContent = "";
   render();
 }
@@ -743,7 +763,7 @@ function exportSession(session) {
     return {
       record_id: attempt.recordId, session_id: session.sessionId, pack_id: session.pack.pack_id,
       local_date: attempt.localDate, order: index + 1, item_id: item.id, candidate_id: candidate.id,
-      sentence: candidate.text, content_role: candidate.content_role,
+      sentence: candidate.text, content_role: candidate.content_role, practice_flow: item.practice_flow || null,
       variation_dimensions: candidate.variation_dimensions,
       variation_detail: candidate.variation_detail,
       use_anchor: item.use_anchor, anchor_id: item.anchor_id, session_goal: item.session_goal,
@@ -767,7 +787,7 @@ function exportSession(session) {
     if (candidate) {
       pendingAttempt = {
         item_id: pending.itemId, candidate_id: pending.candidateId, sentence: candidate.text,
-        content_role: candidate.content_role, variation_dimensions: candidate.variation_dimensions,
+        content_role: candidate.content_role, practice_flow: item.practice_flow || null, variation_dimensions: candidate.variation_dimensions,
         variation_detail: candidate.variation_detail, use_anchor: item.use_anchor,
         item_kind: item.kind, task_type: taskType(item), target: item.target,
         play_count: pending.playCount, audio_completed: pending.audioCompleted,
@@ -1139,6 +1159,9 @@ function render() {
   const stage = progress.stage;
   const activeTask = item ? taskType(item) : null;
   $("progressLabel").textContent = item ? `第 ${progress.itemIndex + 1} / ${session.pack.items.length} 项` : "本包已完成";
+  const challengeCount = item ? progress.attempts.filter(a => a.itemId === item.id).length + 1 : 0;
+  $("challengeStep").hidden = item?.practice_flow !== "adaptive_new_sentence_v1" || stage === "complete";
+  $("challengeStep").textContent = challengeCount === 1 ? "第 1 句 · 先试" : challengeCount === 2 ? "第 2 句 · 换句检验" : "第 3 句 · 再换一次";
   $("stepTitle").textContent = progress.paused ? "已暂停" : ({ ready: "听这一句", playing: "正在播放", rating: "听完了", correcting: "改刚才的判断", judged: "判断已记下", spelling: "先看英文", answer: "核对刚才这句", feedback: "看刚才的反馈", continue: "继续下一句", blocked: "需要新的训练句", complete: "这包练完了" })[stage] || "准备听";
   $("instruction").textContent = progress.paused ? "进度已保存。点“继续”后从这里接着练。" : ({ ready: "先听，不看英文。", playing: "听完后点一次判断。", rating: "按刚才的真实情况点一次。", correcting: "改正误触会保留第一次选择和看答案的记录。", judged: "这是旧轮次留下的步骤，可核对这句。", spelling: attempt?.overallStatus === "not_understood" ? "先核对原句；重听后会自动显示意思，也可立即查看。" : "准备好时点“立即看意思”。", answer: "核对后再继续下一句。", feedback: "这是旧轮次留下的反馈步骤。", continue: "这一句已保存，继续听另一句。", blocked: "没有合格的新句，可交回记录请 Work 补充。", complete: "记录已保存在本机。" })[stage] || "";
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
@@ -1169,9 +1192,14 @@ function render() {
   $("answerPanel").hidden = stage !== "answer" || progress.paused;
   $("answerEnglish").textContent = attempt?.textShown ? (currentCandidate()?.text || "") : "";
   $("sentenceMeaning").textContent = currentCandidate()?.translation_zh || "当前训练包还没有这句的中文意思，请导入补充了整句意思的同一训练包。";
-  const finalItem = progress.itemIndex === session.pack.items.length - 1 &&
-    (attempt?.overallStatus !== "not_understood" || progress.attempts.filter(a => a.itemId === item?.id).length + 1 >= item?.max_observations);
-  document.querySelectorAll("[data-play-next]").forEach(button => { button.textContent = finalItem ? "结束本轮" : "听下一句"; });
+  const nextRole = item && attempt ? nextRoleForItem(item, [...progress.attempts.filter(a => a.itemId === item.id), attempt]) : null;
+  const finalItem = progress.itemIndex === session.pack.items.length - 1 && !nextRole;
+  document.querySelectorAll("[data-play-next]").forEach(button => {
+    button.textContent = nextRole === "relation_context" ? "换句检验"
+      : nextRole === "form" ? "再换一句"
+      : item?.practice_flow === "adaptive_new_sentence_v1" && nextRole === "fallback" ? "换短句再试"
+      : finalItem ? "结束本轮" : "听下一句";
+  });
   $("legacyPanel").hidden = !["feedback", "continue"].includes(stage) || progress.paused;
   $("legacyMessage").textContent = stage === "feedback" && item ? `${item.feedback.spelling}：${item.feedback.meaning}` : "这句已记下，继续听另一句。";
   $("legacyReplaySentence").hidden = !["feedback", "continue"].includes(stage);
