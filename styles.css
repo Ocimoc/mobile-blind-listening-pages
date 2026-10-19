@@ -9,7 +9,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 h2 { font-size: 1.13rem; margin: 0 0 8px; }
 h3 { margin: 0 0 6px; }
 .eyebrow { color: #5a7382; text-transform: uppercase; letter-spacing: .13em; font-size: .72rem; font-weight: 700; margin: 0 0 5px; }
-.challenge-step { display: inline-block; color: #155f68; background: #e7f3f3; border-radius: 999px; padding: 5px 10px; font-size: .82rem; font-weight: 700; margin: 0 0 8px; }
 .card { background: #fff; border: 1px solid #dce4e8; border-radius: 18px; padding: 24px; margin: 0 0 16px; box-shadow: 0 7px 22px #1c38470b; }
 .main-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
 .demo-banner { margin-bottom: 16px; padding: 13px 16px; border: 1px solid #d6b86d; border-radius: 12px; background: #fff8e4; line-height: 1.5; }

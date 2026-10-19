@@ -42,9 +42,3 @@
 同一范围的复制与下载使用同一完整增量 JSON，不截断。`export_id`、`record_count`、记录 ID 顺序和 `payload_checksum` 用于网页核对用户粘贴回来的**原始完整文件内容**。这个校验值用于发现意外改动，**不是服务器签名，也不能证明 Work 已收到**。目前没有 Work 端回执协议，因此用户只有在 Work 真正接收并核对后才手动确认。旧导出清单没有校验值时仍按原有记录 ID 规则处理。重复发送请 Work 按 `record_id` 去重；确认失败保留待回传状态。
 
 `blind_listening_backup_v2` 是单独的完整备份，包含训练包、进度、旧记录和回传状态，不当作每日增量发送。恢复只接受没有任何轮次的浏览器环境，或在旧存储损坏且用户确认时覆盖；不会静默覆盖现有历史。
-
-## 换句挑战流程
-
-可选 `practice_flow: "adaptive_new_sentence_v1"` 只作用于指定 item。它要求四条候选句分别标记 `initial`、`relation_context`、`form`、`low_load_fallback`，且 `max_observations: 3`。首句 `direct` 即结束；首句 `slow` 或 `not_understood` 后用 `relation_context`；第二句 `direct` 后用 `form`，否则用 `low_load_fallback`。第三句后结束。每次仍先核对上一句再换新句，因此第二、三句属于即时反馈后的迁移练习。旧包未设此字段时沿用原有流程。
-
-增量记录及待完成题目附带 `practice_flow`；旧包为 `null`。Work 应将同一 `item_id` 的多条记录按顺序看作一次换句挑战，不把即时反馈后的成功当作隔天稳定掌握。

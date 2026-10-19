@@ -66,15 +66,6 @@ function harness(initial = null, query = "") {
 }
 
 async function run() {
-  if (process.env.BLP_CHALLENGE_PACK_PATH) {
-    const challengeMaterial = JSON.parse(fs.readFileSync(process.env.BLP_CHALLENGE_PACK_PATH, "utf8"));
-    const imported = harness();
-    imported.context.challengeMaterial = challengeMaterial;
-    imported.eval("setActivePack(challengeMaterial)");
-    assert.equal(imported.eval("activeSession().pack.pack_id"), challengeMaterial.pack_id);
-    assert.equal(challengeMaterial.items.length, 12);
-    assert.equal(new Set(challengeMaterial.items.flatMap(item => item.candidates.map(candidate => candidate.text.toLowerCase()))).size, 48);
-  }
   const demo = harness(null, "?demo=1");
   const formalPack = structuredClone(pack);
   formalPack.evidence_scope = "session_observation";
@@ -111,44 +102,6 @@ async function run() {
   assert.equal(addMeanings.eval("activeSession().pack.items[0].candidates[0].translation_zh"), "请开灯。", "translation-only reimport enriches existing pack");
   assert.equal(JSON.stringify(addMeanings.eval("activeSession().progress.attempts[0]")), oldRecord, "reimport does not rewrite completed records");
   const simplePackText = JSON.stringify(simplePack);
-  const challengePack = structuredClone(pack);
-  challengePack.pack_id = "synthetic-new-sentence-challenge";
-  challengePack.items[0].practice_flow = "adaptive_new_sentence_v1";
-  challengePack.items[0].max_observations = 3;
-  challengePack.items[0].candidates = [
-    ["C-INITIAL", "Please turn on the lamp.", "initial"],
-    ["C-CONTEXT", "Will you turn on the fan?", "relation_context"],
-    ["C-FORM", "Turn on the radio, please.", "form"],
-    ["C-SUPPORT", "Turn on the light.", "low_load_fallback"]
-  ].map(([id, text, content_role]) => ({ id, text, content_role, anchor_id: "TEST_DEVICE",
-    translation_zh: "合成测试句。", variation_dimensions: [], work_reviewed: true }));
-  const invalidChallenge = structuredClone(challengePack);
-  invalidChallenge.items[0].candidates.pop();
-  const challenge = harness();
-  challenge.context.challengePack = challengePack;
-  challenge.context.invalidChallenge = invalidChallenge;
-  assert.throws(() => challenge.eval("validatePack(invalidChallenge)"), /换句挑战需要/);
-  challenge.eval("setActivePack(challengePack); db.voice = { key: document.getElementById('voiceSelect').value, approved: true }; saveStore(); selectCandidate(false)");
-  assert.equal(challenge.eval("currentCandidate().content_role"), "initial");
-  challenge.eval("activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'not_understood'; activeSession().progress.stage = 'answer'; activeSession().progress.activeAttempt.answerShown = true; finishAttempt()");
-  assert.equal(challenge.eval("currentCandidate().content_role"), "relation_context", "unknown word moves to a new sentence");
-  assert.match(challenge.element("challengeStep").textContent, /第 2 句/);
-  challenge.eval("activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'direct'; activeSession().progress.stage = 'answer'; finishAttempt()");
-  assert.equal(challenge.eval("currentCandidate().content_role"), "form", "recognized new sentence earns another changed sentence");
-  challenge.eval("activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'direct'; activeSession().progress.stage = 'answer'; finishAttempt()");
-  assert.equal(challenge.eval("activeSession().progress.stage"), "complete");
-  assert.equal(challenge.eval("activeSession().progress.attempts.length"), 3);
-  assert.equal(challenge.eval("exportSession(activeSession()).attempts[1].practice_flow"), "adaptive_new_sentence_v1");
-  const easyKnown = harness();
-  easyKnown.context.challengePack = challengePack;
-  easyKnown.eval("setActivePack(challengePack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'direct'; activeSession().progress.stage = 'answer'; finishAttempt()");
-  assert.equal(easyKnown.eval("activeSession().progress.stage"), "complete", "already understood target does not waste more sentences");
-  const needsSupport = harness();
-  needsSupport.context.challengePack = challengePack;
-  needsSupport.eval("setActivePack(challengePack); selectCandidate(false); activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'slow'; activeSession().progress.stage = 'answer'; finishAttempt()");
-  assert.equal(needsSupport.eval("currentCandidate().content_role"), "relation_context");
-  needsSupport.eval("activeSession().progress.activeAttempt.playCount = 1; activeSession().progress.activeAttempt.audioCompleted = true; activeSession().progress.activeAttempt.overallStatus = 'not_understood'; activeSession().progress.activeAttempt.answerShown = true; activeSession().progress.stage = 'answer'; finishAttempt()");
-  assert.equal(needsSupport.eval("currentCandidate().content_role"), "low_load_fallback", "new sentence failure gets an easier fresh sentence");
   const simple = harness();
   simple.element("packPaste").value = simplePackText;
   simple.eval("importPastedPack()");

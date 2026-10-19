@@ -59,7 +59,7 @@ async function run() {
     await page.reload();
     assert.equal(await page.locator("#trainerCard").isVisible(), true, "confirmed voice survives reload without another sample");
     assert.equal(await page.locator("#voiceCard").isVisible(), false);
-    assert.match(await page.locator("#progressLabel").innerText(), /第 1 \/ 1 项/);
+    assert.match(await page.locator("#progressLabel").innerText(), /本包第 1 \/ 1 项/);
     await page.locator("#playSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
     if (process.env.BLP_SCREENSHOT) await page.screenshot({ path: process.env.BLP_SCREENSHOT, fullPage: true });
@@ -72,7 +72,6 @@ async function run() {
     assert.deepEqual(await page.evaluate(() => window.__spoken), ["Please turn on the light.", "Please turn on the light."],
       "failure immediately replays the full sentence");
     await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 1);
-    await page.locator("#spellingPanel details").last().locator("summary").click();
     await page.locator("#replaySpellingSentence").click();
     await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 2);
     assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
@@ -82,7 +81,6 @@ async function run() {
     await page.locator('[data-reason="target_sound"]').click();
     await page.locator("#revealMeaning").click();
     assert.equal(await page.locator("#answerPanel").isVisible(), true);
-    await page.locator("#answerPanel details summary").click();
     await page.locator("#replayAnswerSentence").click();
     await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 3);
     assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
@@ -159,46 +157,6 @@ async function run() {
     await page.goto("https://blp.test/index.html");
     assert.equal(await page.locator("#demoBanner").isVisible(), false);
     assert.equal(await page.evaluate(() => localStorage.getItem("english-blind-listening-v1")), normalStore);
-
-    const challengePack = structuredClone(pack);
-    challengePack.pack_id = "synthetic-mobile-new-sentence-challenge";
-    challengePack.items[0].practice_flow = "adaptive_new_sentence_v1";
-    challengePack.items[0].max_observations = 3;
-    challengePack.items[0].candidates = [
-      ["UI-INITIAL", "Please turn on the lamp.", "initial"],
-      ["UI-CONTEXT", "Will you turn on the fan?", "relation_context"],
-      ["UI-FORM", "Turn on the radio, please.", "form"],
-      ["UI-SUPPORT", "Turn on the light.", "low_load_fallback"]
-    ].map(([id, text, content_role]) => ({ id, text, content_role, anchor_id: pack.items[0].anchor_id,
-      translation_zh: "虚构测试句。", variation_dimensions: [], work_reviewed: true }));
-    await page.evaluate(() => localStorage.removeItem("english-blind-listening-v1"));
-    await page.reload();
-    await page.locator("#importPack").setInputFiles({ name: "challenge.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(challengePack)) });
-    await page.locator("#previewVoice").click();
-    await page.locator("#approveVoice").click();
-    assert.match(await page.locator("#challengeStep").innerText(), /第 1 句/);
-    await page.locator("#playSentence").click();
-    await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    await page.locator('[data-rating="not_understood"]').click();
-    await page.locator("#revealMeaning").click();
-    assert.equal(await page.locator("#answerPanel [data-play-next]").innerText(), "换句检验");
-    await page.locator("#answerPanel [data-play-next]").click();
-    await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    assert.match(await page.locator("#challengeStep").innerText(), /第 2 句/);
-    assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Will you turn on the fan?");
-    await page.reload();
-    await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    await page.locator('[data-rating="direct"]').click();
-    assert.equal(await page.locator("#answerPanel [data-play-next]").innerText(), "再换一句");
-    await page.locator("#answerPanel [data-play-next]").click();
-    await page.locator("#ratingPanel").waitFor({ state: "visible" });
-    assert.match(await page.locator("#challengeStep").innerText(), /第 3 句/);
-    assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Turn on the radio, please.");
-    await page.locator('[data-rating="direct"]').click();
-    await page.locator("#answerPanel [data-play-next]").click();
-    assert.equal(await page.locator("#completePanel").isVisible(), true);
-    assert.deepEqual(await page.evaluate(() => activeSession().progress.attempts.map(attempt => attempt.candidateId)),
-      ["UI-INITIAL", "UI-CONTEXT", "UI-FORM"]);
     await context.close();
     console.log("PASS mobile UI simulation");
   } finally {
