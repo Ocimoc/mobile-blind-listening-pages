@@ -1144,7 +1144,9 @@ function render() {
   $("pauseSession").textContent = progress.paused ? "继续" : "暂停";
   const controlsEnabled = !!item && !progress.paused && ["ready", "rating"].includes(stage);
   $("playSentence").hidden = stage !== "ready" || progress.paused;
+  $("playSentence").textContent = attempt?.playCount ? "再听整句" : "播放这一句";
   $("replaySentence").hidden = stage !== "rating" || progress.paused;
+  $("replayPlayingSentence").hidden = stage !== "playing" || progress.paused;
   $("stopAudio").hidden = stage !== "playing" || progress.paused;
   $("playRow").hidden = !["ready", "playing"].includes(stage) || progress.paused;
   $("playSentence").disabled = !controlsEnabled || stage !== "ready";
@@ -1288,6 +1290,7 @@ function bindEvents() {
   });
   $("approveVoice").addEventListener("click", () => { db.voice = { key: $("voiceSelect").value, approved: true, approvedAt: now() }; saveStore(); render(); });
   $("playSentence").addEventListener("click", playSentence);
+  $("replayPlayingSentence").addEventListener("click", () => { interruptAudio(); playSentence(); });
   $("replaySentence").addEventListener("click", playSentence);
   $("stopAudio").addEventListener("click", interruptAudio);
   $("showText").addEventListener("click", revealSpelling);

@@ -70,6 +70,7 @@
       <div id="playRow" class="play-row">
         <button id="playSentence" type="button" class="play-button">播放这一句</button>
         <button id="stopAudio" type="button" class="button ghost">停止声音</button>
+        <button id="replayPlayingSentence" type="button" class="button secondary" hidden>再听整句</button>
       </div>
       <p id="playStatus" class="status" role="status"></p>
 
@@ -93,8 +94,8 @@
       <div id="judgedPanel" class="panel" hidden>
         <p id="judgedSummary" class="panel-title">判断已记下</p>
         <div class="button-row">
-          <button type="button" class="button primary" data-play-next>播放下一句</button>
           <button id="replayJudgedSentence" type="button" class="button secondary">再听整句</button>
+          <button type="button" class="button primary" data-play-next>播放下一句</button>
           <button id="revealAfterJudgment" type="button" class="button secondary">核对刚才这句</button>
           <button type="button" class="button ghost" data-correct>改刚才的判断</button>
         </div>
@@ -102,6 +103,7 @@
 
       <div id="spellingPanel" class="panel" hidden>
         <p class="panel-title">刚才这句</p>
+        <button id="replaySpellingSentence" type="button" class="button secondary replay-before-rating">再听整句</button>
         <p id="revealedText" class="revealed"></p>
         <details id="optionalDiagnosis" class="optional-note">
           <summary>补充卡点（可选）</summary>
@@ -123,9 +125,8 @@
           <button id="revealMeaning" type="button" class="button primary">立即看意思</button>
         </div>
         <details class="optional-note">
-          <summary>再听或改判断</summary>
+          <summary>改刚才的判断（可选）</summary>
           <div class="button-row">
-            <button id="replaySpellingSentence" type="button" class="button secondary">再听整句</button>
             <button type="button" class="button ghost" data-correct>改刚才的判断</button>
           </div>
         </details>
@@ -133,6 +134,7 @@
 
       <div id="answerPanel" class="panel feedback" hidden>
         <p class="panel-title">刚才这句</p>
+        <button id="replayAnswerSentence" type="button" class="button secondary replay-before-rating">再听整句</button>
         <p id="answerEnglish" class="revealed"></p>
         <p class="panel-title meaning-label">整句话的意思</p>
         <p id="sentenceMeaning" class="sentence-meaning"></p>
@@ -143,9 +145,8 @@
           <button type="button" class="button primary next-button" data-play-next>听下一句</button>
         </div>
         <details class="optional-note">
-          <summary>再听或改判断</summary>
+          <summary>改刚才的判断（可选）</summary>
           <div class="button-row">
-            <button id="replayAnswerSentence" type="button" class="button secondary">再听整句</button>
             <button type="button" class="button ghost" data-correct>改刚才的判断</button>
           </div>
         </details>
@@ -228,6 +229,6 @@
       </section>
     </div>
   </main>
-  <script src="app.js?v=20261016-2" defer></script>
+  <script src="app.js?v=20261020-1" defer></script>
 </body>
 </html>
