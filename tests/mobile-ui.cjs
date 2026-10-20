@@ -24,7 +24,7 @@ async function run() {
       const voice = { name: "Local English", lang: "en-US", localService: true };
       window.__spoken = [];
       Object.defineProperty(window, "speechSynthesis", { configurable: true, value: {
-        getVoices: () => [voice], cancel() {}, speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => utterance.onend?.(), 20); }
+        getVoices: () => [voice], cancel() {}, speak(utterance) { window.__spoken.push(utterance.text); setTimeout(() => utterance.onend?.(), 200); }
       } });
       window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
     });
@@ -59,14 +59,18 @@ async function run() {
     await page.reload();
     assert.equal(await page.locator("#trainerCard").isVisible(), true, "confirmed voice survives reload without another sample");
     assert.equal(await page.locator("#voiceCard").isVisible(), false);
-    assert.match(await page.locator("#progressLabel").innerText(), /本包第 1 \/ 1 项/);
+    assert.match(await page.locator("#progressLabel").innerText(), /第 1 \/ 1 项/);
     await page.locator("#playSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#replaySentence").isVisible(), true);
+    assert.ok(await page.locator("#replaySentence").evaluate(button => button.compareDocumentPosition(document.querySelector(".rating-grid")) & Node.DOCUMENT_POSITION_FOLLOWING));
+    assert.ok((await page.locator("#replaySentence").boundingBox()).y < (await page.locator(".rating-grid").boundingBox()).y);
     if (process.env.BLP_SCREENSHOT) await page.screenshot({ path: process.env.BLP_SCREENSHOT, fullPage: true });
     assert.equal(await page.locator("#ratingPanel .choice").count(), 3);
     assert.equal(await page.locator("#spellingPanel").isVisible(), false);
     await page.locator('[data-rating="not_understood"]').click();
     assert.equal(await page.locator("#spellingPanel").isVisible(), true);
+    assert.equal(await page.locator("#replaySpellingSentence").isVisible(), true);
     assert.equal(await page.locator("#answerPanel").isVisible(), false);
     assert.match(await page.locator("#revealedText").innerText(), /Please turn on the light/);
     assert.deepEqual(await page.evaluate(() => window.__spoken), ["Please turn on the light.", "Please turn on the light."],
@@ -81,9 +85,12 @@ async function run() {
     await page.locator('[data-reason="target_sound"]').click();
     await page.locator("#revealMeaning").click();
     assert.equal(await page.locator("#answerPanel").isVisible(), true);
+    assert.equal(await page.locator("#replayAnswerSentence").isVisible(), true);
+    assert.ok((await page.locator("#replayAnswerSentence").boundingBox()).y < 844, "replay stays in the phone viewport after judgment");
     await page.locator("#replayAnswerSentence").click();
     await page.waitForFunction(() => activeSession().progress.activeAttempt.feedbackReplayCompletedCount === 3);
     assert.equal((await page.evaluate(() => window.__spoken)).at(-1), "Please turn on the light.");
+    await page.locator("#answerPanel .optional-note summary").click();
     await page.locator("#answerPanel [data-correct]").click();
     await page.locator('[data-rating="slow"]').click();
     await page.locator("#answerPanel [data-play-next]").click();
@@ -124,7 +131,11 @@ async function run() {
     await page.locator("#previewVoice").click();
     await page.locator("#approveVoice").click();
     await page.locator("#playSentence").click();
+    assert.equal(await page.locator("#replayPlayingSentence").isVisible(), true);
+    await page.locator("#replayPlayingSentence").click();
     await page.locator("#ratingPanel").waitFor({ state: "visible" });
+    assert.equal((await page.evaluate(() => window.__spoken)).slice(-2).every(text => text === "The lamp is on."), true,
+      "replay during playback restarts the current full sentence");
     await page.locator('[data-rating="direct"]').click();
     assert.equal(await page.locator("#answerPanel").isVisible(), true);
     assert.equal(await page.locator("#sentenceMeaning").innerText(), "台灯亮着。");
